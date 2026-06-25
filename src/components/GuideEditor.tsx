@@ -193,35 +193,41 @@ function ImportModal({ channel, folders, onDone, onClose }: {
   };
 
   const uploadAll = async () => {
-    const pending = entries.filter(e => e.status === "pending" || e.status === "err");
-    if (!pending.length) return;
+    // 업로드할 항목 인덱스 목록을 미리 확정 (업로드 중 entries 변경 방지)
+    const targets = entries
+      .map((e, i) => ({ i, name: e.name, content: e.content, status: e.status }))
+      .filter(e => e.status === "pending" || e.status === "err");
+    if (!targets.length) return;
     setBusy(true);
 
-    await Promise.all(
-      entries.map(async (entry, i) => {
-        if (entry.status !== "pending" && entry.status !== "err") return;
-        setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "uploading" } : e));
-        const filePath = folder ? `${folder}/${entry.name}` : entry.name;
-        try {
-          const r = await fetch(`/api/channels/${channel}/files/${filePath}`, {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: entry.content }),
-          });
-          if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error ?? `HTTP ${r.status}`); }
-          setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "ok" } : e));
-        } catch (err) {
-          setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "err", errMsg: err instanceof Error ? err.message : "실패" } : e));
+    // GitHub API는 동시 커밋 시 parent 충돌 → 반드시 순차 업로드
+    for (const { i, name, content } of targets) {
+      setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "uploading", errMsg: undefined } : e));
+      const filePath = folder ? `${folder}/${name}` : name;
+      try {
+        const r = await fetch(`/api/channels/${channel}/files/${filePath}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d.error ?? `HTTP ${r.status}`);
         }
-      })
-    );
+        setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "ok" } : e));
+      } catch (err) {
+        setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "err", errMsg: err instanceof Error ? err.message : "실패" } : e));
+      }
+    }
 
     setBusy(false);
-    // 모두 성공하면 닫기
+    void onDone(); // 성공 여부와 무관하게 트리 새로고침
+
+    // 모두 성공했으면 자동 닫기
     setEntries(prev => {
-      if (prev.every(e => e.status === "ok")) { void onDone(); onClose(); }
+      if (prev.every(e => e.status === "ok")) setTimeout(onClose, 600);
       return prev;
     });
-    void onDone(); // 일부만 성공해도 트리 새로고침
   };
 
   const allOk = entries.length > 0 && entries.every(e => e.status === "ok");
