@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { CHANNELS, type ChannelKey } from "@/lib/channels";
 import { buildSystemPrompt } from "@/lib/channelFiles";
 import { resolveGithubToken } from "@/lib/resolveToken";
-import { loadAIConfig, type Provider } from "@/lib/aiConfig";
+import { loadAIConfig, type Provider, type ProviderKey } from "@/lib/aiConfig";
+import { resolveProvider, resolveActiveProvider } from "@/lib/resolveProvider";
 
 // ─── Claude API ───────────────────────────────────────────────
 async function callClaude(apiKey: string, model: string, systemPrompt: string, userMessage: string): Promise<string> {
@@ -180,14 +181,14 @@ ${topic}은 현대 비즈니스 환경에서 기업의 지속 성장을 위한 �
 
 // ─── 채널별 콘텐츠 생성 ───────────────────────────────────────
 async function generateContent(
+  req: NextRequest,
   channel: ChannelKey,
   topic: string,
   draft: string,
   systemPrompt: string,
   providerOverride?: string
 ): Promise<string> {
-  const config = await loadAIConfig();
-  const provider = (providerOverride ?? config.activeProvider) as Provider;
+  const provider = (providerOverride ?? resolveActiveProvider(req)) as Provider;
 
   const userMessage = draft
     ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요. 가이드의 형식, 어조, 구조를 철저히 준수하세요.
@@ -201,22 +202,18 @@ ${draft}
 위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요.`
     : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}`;
 
-  if (provider === "claude") {
-    if (!config.providers.claude.apiKey)
-      throw new Error("Claude API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력해주세요.");
-    return callClaude(config.providers.claude.apiKey, config.providers.claude.model, systemPrompt, userMessage);
-  }
+  if (provider !== "mock") {
+    // 쿠키/환경변수 우선 → 없으면 GitHub 설정 파일 폴백
+    const pc = resolveProvider(req, provider as ProviderKey)
+      ?? await loadAIConfig().then(c => c.providers[provider as ProviderKey]).catch(() => null);
 
-  if (provider === "openai") {
-    if (!config.providers.openai.apiKey)
-      throw new Error("OpenAI API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력해주세요.");
-    return callOpenAI(config.providers.openai.apiKey, config.providers.openai.model, systemPrompt, userMessage);
-  }
+    if (!pc?.apiKey) {
+      throw new Error(`${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.`);
+    }
 
-  if (provider === "gemini") {
-    if (!config.providers.gemini.apiKey)
-      throw new Error("Gemini API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력해주세요.");
-    return callGemini(config.providers.gemini.apiKey, config.providers.gemini.model, systemPrompt, userMessage);
+    if (provider === "claude") return callClaude(pc.apiKey, pc.model, systemPrompt, userMessage);
+    if (provider === "openai") return callOpenAI(pc.apiKey, pc.model, systemPrompt, userMessage);
+    if (provider === "gemini") return callGemini(pc.apiKey, pc.model, systemPrompt, userMessage);
   }
 
   return mockGenerate(channel, topic, systemPrompt);
@@ -248,7 +245,7 @@ export async function POST(req: NextRequest) {
     const results = await Promise.all(
       targetChannels.map(async (channel) => {
         const systemPrompt = await buildSystemPrompt(channel, token);
-        const content = await generateContent(channel, topic.trim(), draft, systemPrompt, providerOverride);
+        const content = await generateContent(req, channel, topic.trim(), draft, systemPrompt, providerOverride);
         return { channel, content };
       })
     );

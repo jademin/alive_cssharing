@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadAIConfig, type Provider, type ProviderKey } from "@/lib/aiConfig";
+import { resolveProvider, resolveActiveProvider } from "@/lib/resolveProvider";
 
 async function callAI(
   provider: ProviderKey,
@@ -142,17 +143,19 @@ export async function POST(req: NextRequest) {
     const { topic, provider: providerOverride } = await req.json() as { topic: string; provider?: string };
     if (!topic?.trim()) return NextResponse.json({ error: "주제를 입력해주세요." }, { status: 400 });
 
-    const config = await loadAIConfig();
-    const provider = (providerOverride ?? config.activeProvider) as Provider;
+    const provider = (providerOverride ?? resolveActiveProvider(req)) as Provider;
 
     if (provider === "mock") {
       return NextResponse.json({ drafts: mockDrafts(topic.trim()) });
     }
 
-    const pc = config.providers[provider as ProviderKey];
+    // 쿠키/환경변수 우선 → 없으면 GitHub 설정 파일 폴백
+    const pc = resolveProvider(req, provider as ProviderKey)
+      ?? await loadAIConfig().then(c => c.providers[provider as ProviderKey]).catch(() => null);
+
     if (!pc?.apiKey) {
       return NextResponse.json(
-        { error: `${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력해주세요.` },
+        { error: `${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.` },
         { status: 400 }
       );
     }
