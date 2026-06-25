@@ -104,13 +104,34 @@ export async function buildSystemPrompt(channel: ChannelKey): Promise<string> {
   for (const relPath of meta.include) {
     try {
       const content = await readChannelFile(channel, relPath);
-      parts.push(`\n\n${"=".repeat(60)}\n# 파일: ${relPath}\n${"=".repeat(60)}\n\n${content}`);
+      parts.push(`\n\n${"=".repeat(60)}\n# 가이드 파일: ${relPath}\n${"=".repeat(60)}\n\n${content}`);
     } catch {
       // 파일이 없으면 스킵
     }
   }
 
-  return parts.join("\n");
+  if (parts.length === 0) return "";
+
+  const guideList = meta.include.map((p, i) => `  ${i + 1}. ${p}`).join("\n");
+
+  const header = `당신은 ${meta.label} 채널 전용 마케팅 콘텐츠 작성 AI입니다.
+
+[필수 준수 사항]
+아래 가이드 문서(${meta.include.length}개)는 반드시 읽고 철저히 따라야 합니다.
+가이드에 명시된 형식, 구조, 어조, 금지 사항을 어기면 안 됩니다.
+
+[참조 가이드 목록]
+${guideList}
+
+[규칙]
+- 가이드의 형식과 구조를 그대로 따르세요.
+- 가이드에 없는 표현 방식이나 포맷은 사용하지 마세요.
+- 가이드의 금지 항목을 절대 위반하지 마세요.
+- 채널 특성과 가이드 톤에 맞게 작성하세요.
+
+[가이드 전문]`;
+
+  return header + parts.join("\n");
 }
 
 export { CHANNELS };
