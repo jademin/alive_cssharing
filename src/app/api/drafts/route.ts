@@ -1,17 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs/promises";
-import path from "path";
-
-const CONFIG_PATH = path.join(process.cwd(), "data", "ai-config.json");
-
-async function loadAIConfig() {
-  try {
-    const raw = await fs.readFile(CONFIG_PATH, "utf-8");
-    return JSON.parse(raw.replace(/^﻿/, "")) as { provider: string; apiKey: string; model: string };
-  } catch {
-    return { provider: "mock", apiKey: "", model: "" };
-  }
-}
+import { loadAIConfig } from "@/lib/aiConfig";
 
 async function callAI(config: { provider: string; apiKey: string; model: string }, system: string, user: string): Promise<string> {
   if (config.provider === "claude") {

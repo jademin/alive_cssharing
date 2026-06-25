@@ -1,8 +1,8 @@
-﻿{
-    "label":  "페이스북",
-    "description":  "채널별 가이드 파일 기반 콘텐츠 생성",
-    "include":  [
-                    "guide.md"
-                ],
-    "type":  "single"
+{
+  "label": "페이스북",
+  "type": "single",
+  "description": "B2B 정보성 + 참여 유도 콘텐츠 생성",
+  "include": [
+    "guide.md"
+  ]
 }

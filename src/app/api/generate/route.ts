@@ -1,21 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs/promises";
-import path from "path";
 import { CHANNELS, type ChannelKey } from "@/lib/channels";
 import { buildSystemPrompt } from "@/lib/channelFiles";
 import { resolveGithubToken } from "@/lib/resolveToken";
-
-// ─── AI 설정 로드 ──────────────────────────────────────────────
-const CONFIG_PATH = path.join(process.cwd(), "data", "ai-config.json");
-
-async function loadAIConfig() {
-  try {
-    const raw = await fs.readFile(CONFIG_PATH, "utf-8");
-    return JSON.parse(raw.replace(/^﻿/, "")) as { provider: string; apiKey: string; model: string };
-  } catch {
-    return { provider: "mock", apiKey: "", model: "" };
-  }
-}
+import { loadAIConfig } from "@/lib/aiConfig";
 
 // ─── Claude API ───────────────────────────────────────────────
 async function callClaude(apiKey: string, model: string, systemPrompt: string, userMessage: string): Promise<string> {

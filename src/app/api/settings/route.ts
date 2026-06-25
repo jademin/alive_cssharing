@@ -1,33 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs/promises";
-import path from "path";
-import { isVercelProd, githubWrite } from "@/lib/githubStorage";
 import { resolveGithubToken } from "@/lib/resolveToken";
+import { loadAIConfig, saveAIConfig, type AIConfig } from "@/lib/aiConfig";
 
-const CONFIG_PATH = path.join(process.cwd(), "data", "ai-config.json");
+export type { AIConfig };
 
-export interface AIConfig {
-  provider: "mock" | "claude" | "openai";
-  apiKey: string;
-  model: string;
-}
-
-async function readConfig(): Promise<AIConfig> {
-  try {
-    const raw = await fs.readFile(CONFIG_PATH, "utf-8");
-    return JSON.parse(raw.replace(/^﻿/, ""));
-  } catch {
-    return { provider: "mock", apiKey: "", model: "" };
-  }
-}
-
-async function writeConfig(config: AIConfig, token?: string) {
-  if (isVercelProd()) {
-    await githubWrite("data/ai-config.json", JSON.stringify(config, null, 2), token);
-    return;
-  }
-  await fs.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2), "utf-8");
-}
+const readConfig = loadAIConfig;
+const writeConfig = saveAIConfig;
 
 /** GET — 현재 설정 반환 (API 키는 마스킹) */
 export async function GET() {
