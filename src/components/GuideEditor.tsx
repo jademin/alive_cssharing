@@ -271,6 +271,8 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState("");
+  const [globalError, setGlobalError] = useState<string | null>(null);
+  const [githubOk, setGithubOk] = useState<boolean | null>(null);
 
   const { color } = CHANNEL_COLORS[channel];
   const label = CHANNEL_LABELS[channel];
@@ -303,6 +305,9 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
   useEffect(() => { loadChannel(); }, [loadChannel]);
   useEffect(() => { if (selectedFile) loadFile(selectedFile); }, [selectedFile, loadFile]);
+  useEffect(() => {
+    fetch("/api/health").then(r => r.json()).then(d => setGithubOk(d.ok)).catch(() => setGithubOk(true));
+  }, []);
 
   const handleSave = async () => {
     if (!isDirty || saving || !selectedFile) return;
@@ -339,9 +344,19 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
   const handleDelete = async (filePath: string) => {
     if (!confirm(`"${filePath}" 파일을 삭제하시겠습니까?`)) return;
-    await fetch(`/api/channels/${channel}/files/${filePath}`, { method: "DELETE" });
-    if (selectedFile === filePath) setSelectedFile(null);
-    await loadChannel();
+    setGlobalError(null);
+    try {
+      const res = await fetch(`/api/channels/${channel}/files/${filePath}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "삭제에 실패했습니다." }));
+        setGlobalError(err.error ?? "삭제에 실패했습니다.");
+        return;
+      }
+      if (selectedFile === filePath) setSelectedFile(null);
+      await loadChannel();
+    } catch {
+      setGlobalError("네트워크 오류가 발생했습니다.");
+    }
   };
 
   const handleCreateFolder = async () => {
@@ -426,6 +441,26 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
           </button>
         </div>
       </div>
+
+      {/* GitHub 미설정 경고 */}
+      {githubOk === false && (
+        <div className="mb-4 flex items-start gap-2 text-sm text-amber-800 bg-amber-50 border border-amber-300 rounded-xl px-4 py-3" role="alert">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold">GitHub 연동이 설정되지 않아 파일 저장/삭제가 불가합니다.</p>
+            <p className="text-xs mt-1">Vercel 대시보드 → <strong>alive-cssharing</strong> 프로젝트 → Settings → <strong>Environment Variables</strong>에서 <code className="bg-amber-100 px-1 rounded font-mono">GITHUB_TOKEN</code> 값을 추가한 뒤 Redeploy 해주세요.</p>
+          </div>
+        </div>
+      )}
+
+      {/* 전역 에러 (삭제 실패 등) */}
+      {globalError && (
+        <div className="mb-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-xl px-4 py-3" role="alert">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span className="flex-1">{globalError}</span>
+          <button onClick={() => setGlobalError(null)} className="shrink-0 text-red-400 hover:text-red-600 cursor-pointer"><X className="w-4 h-4" /></button>
+        </div>
+      )}
 
       {/* Status */}
       {saveStatus === "success" && (
