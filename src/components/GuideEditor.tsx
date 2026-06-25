@@ -162,8 +162,8 @@ function ImportPanel({
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         throw new Error(err.error ?? "저장 실패");
       }
-      await onImported(); // 트리 새로고침 완료 후 패널 닫기
-      onClose();
+      onClose(); // 즉시 닫기
+      void onImported(); // 트리 백그라운드 갱신
     } catch (e) {
       setError(e instanceof Error ? e.message : "저장 실패");
     } finally {
@@ -245,6 +245,16 @@ function ImportPanel({
       </div>
     </div>
   );
+}
+
+function removeNodeFromTree(nodes: FileNode[], filePath: string): FileNode[] {
+  return nodes
+    .filter(n => n.path !== filePath)
+    .map(n =>
+      n.type === "dir" && n.children
+        ? { ...n, children: removeNodeFromTree(n.children, filePath) }
+        : n
+    );
 }
 
 function findFirstFile(nodes: FileNode[]): string | null {
@@ -345,16 +355,29 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   const handleDelete = async (filePath: string) => {
     if (!confirm(`"${filePath}" 파일을 삭제하시겠습니까?`)) return;
     setGlobalError(null);
+
+    // 낙관적 UI: 즉시 트리에서 제거
+    const prevTree = tree;
+    const prevMeta = meta;
+    setTree(prev => removeNodeFromTree(prev, filePath));
+    if (selectedFile === filePath) setSelectedFile(null);
+    if (meta?.include.includes(filePath)) {
+      setMeta(prev => prev ? { ...prev, include: prev.include.filter(p => p !== filePath) } : prev);
+    }
+
     try {
       const res = await fetch(`/api/channels/${channel}/files/${filePath}`, { method: "DELETE" });
       if (!res.ok) {
+        setTree(prevTree);
+        setMeta(prevMeta);
         const err = await res.json().catch(() => ({ error: "삭제에 실패했습니다." }));
         setGlobalError(err.error ?? "삭제에 실패했습니다.");
         return;
       }
-      if (selectedFile === filePath) setSelectedFile(null);
-      await loadChannel();
+      void loadChannel(); // 백그라운드에서 GitHub 상태 동기화
     } catch {
+      setTree(prevTree);
+      setMeta(prevMeta);
       setGlobalError("네트워크 오류가 발생했습니다.");
     }
   };
@@ -363,6 +386,13 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     const name = newFolderName.trim().replace(/[/\\<>:"|?*]/g, "");
     if (!name) return;
     setFolderError("");
+
+    // 낙관적 UI: 즉시 폴더 추가
+    const newFolderNode: FileNode = { name, path: name, type: "dir", included: false, children: [] };
+    setTree(prev => [...prev, newFolderNode]);
+    setShowNewFolder(false);
+    setNewFolderName("");
+
     try {
       const res = await fetch(`/api/channels/${channel}/files/${name}/_keep`, {
         method: "POST",
@@ -370,15 +400,18 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         body: JSON.stringify({ content: "" }),
       });
       if (!res.ok) {
+        setTree(prev => prev.filter(n => n.path !== name));
+        setShowNewFolder(true);
+        setNewFolderName(name);
         const err = await res.json().catch(() => ({ error: "폴더 생성 실패" }));
         setFolderError(err.error ?? "폴더 생성 실패");
         return;
       }
-      setShowNewFolder(false);
-      setNewFolderName("");
-      setFolderError("");
-      await loadChannel();
+      void loadChannel(); // 백그라운드 동기화
     } catch {
+      setTree(prev => prev.filter(n => n.path !== name));
+      setShowNewFolder(true);
+      setNewFolderName(name);
       setFolderError("네트워크 오류가 발생했습니다.");
     }
   };
