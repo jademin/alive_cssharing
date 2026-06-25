@@ -65,6 +65,10 @@ export async function PUT(req: NextRequest) {
       if (body.model !== undefined && body.model !== "") {
         updated.providers[p].model = body.model;
       }
+      // API 키가 처음 저장되면 activeProvider를 자동으로 해당 provider로 변경
+      if (updated.providers[p].apiKey && updated.activeProvider === "mock") {
+        updated.activeProvider = p;
+      }
     }
 
     await saveAIConfig(updated, token);

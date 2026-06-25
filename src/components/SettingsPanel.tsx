@@ -65,9 +65,10 @@ const PROVIDER_INFO: Record<ProviderKey, {
 };
 
 // ── 개별 provider 섹션 ─────────────────────────────────────
-function ProviderSection({ providerKey, state }: {
+function ProviderSection({ providerKey, state, onSaveSuccess }: {
   providerKey: ProviderKey;
   state: ProviderState;
+  onSaveSuccess?: () => void;
 }) {
   const info = PROVIDER_INFO[providerKey];
   const [apiKeyInput, setApiKeyInput] = useState("");
@@ -81,7 +82,6 @@ function ProviderSection({ providerKey, state }: {
   const handleSave = async () => {
     setSaving(true);
     setSaveStatus("idle");
-    setTestResult(null);
     try {
       const body: Record<string, string> = { provider: providerKey, model };
       if (apiKeyInput.trim()) body.apiKey = apiKeyInput.trim();
@@ -93,6 +93,7 @@ function ProviderSection({ providerKey, state }: {
       if (!res.ok) throw new Error();
       setSaveStatus("success");
       setApiKeyInput("");
+      onSaveSuccess?.();
       setTimeout(() => setSaveStatus("idle"), 3000);
     } catch {
       setSaveStatus("error");
@@ -325,6 +326,7 @@ export default function SettingsPanel() {
               key={p}
               providerKey={p}
               state={settings?.providers[p] ?? { apiKeySet: false, apiKeyMasked: "", model: PROVIDER_INFO[p].defaultModel }}
+              onSaveSuccess={fetchSettings}
             />
           ))}
         </div>

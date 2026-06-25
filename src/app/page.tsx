@@ -210,10 +210,13 @@ export default function HomePage() {
         available.push("mock");
         setAvailableProviders(available);
 
-        // 저장된 기본값 또는 첫 번째 실 API 제공사로 초기화
-        const defaultProvider = data.activeProvider && available.includes(data.activeProvider)
-          ? data.activeProvider
-          : available[0];
+        // 저장된 activeProvider 우선, 없으면 첫 번째 실 API 제공사, 없으면 mock
+        const configProvider = data.activeProvider as AIProvider | undefined;
+        const firstReal = available.find(p => p !== "mock");
+        const defaultProvider =
+          (configProvider && configProvider !== "mock" && available.includes(configProvider))
+            ? configProvider
+            : firstReal ?? "mock";
         setSelectedProvider(defaultProvider);
       } catch {
         setAvailableProviders(["mock"]);
@@ -371,9 +374,19 @@ export default function HomePage() {
             <div className="glass-card rounded-3xl p-6 sm:p-8 mb-8 max-w-2xl mx-auto">
 
               {/* AI 선택 바 */}
-              {availableProviders.length > 1 && (
-                <div className="mb-5">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">사용할 AI</p>
+              <div className="mb-5">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">초안 및 콘텐츠 생성 AI</p>
+                  {phase === "drafts" && (
+                    <span className="text-[10px] text-slate-400">초안 생성 후 변경 불가</span>
+                  )}
+                </div>
+                {availableProviders.length <= 1 ? (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs">
+                    <span>AI API 키가 설정되지 않았습니다.</span>
+                    <a href="/settings" className="font-semibold underline hover:text-amber-900">설정 페이지에서 연결하기 →</a>
+                  </div>
+                ) : (
                   <div className="flex flex-wrap gap-2">
                     {AI_PROVIDERS.filter(p => availableProviders.includes(p.id)).map(p => {
                       const isActive = selectedProvider === p.id;
@@ -392,8 +405,8 @@ export default function HomePage() {
                       );
                     })}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                 주제 또는 핵심 문구 입력
@@ -428,8 +441,8 @@ export default function HomePage() {
                 <button onClick={() => void handleGetDrafts()} disabled={!topic.trim() || draftLoading}
                   className="btn-cta w-full flex items-center justify-center gap-2 py-4 rounded-xl text-base font-semibold">
                   {draftLoading
-                    ? <><Loader2 className="w-5 h-5 animate-spin" />{AI_PROVIDERS.find(p => p.id === selectedProvider)?.label ?? selectedProvider}(으)로 초안 추천 중...</>
-                    : <><Sparkles className="w-5 h-5" />초안 추천받기</>}
+                    ? <><Loader2 className="w-5 h-5 animate-spin" />{AI_PROVIDERS.find(p => p.id === selectedProvider)?.label ?? selectedProvider}(으)로 초안 생성 중...</>
+                    : <><Sparkles className="w-5 h-5" />{AI_PROVIDERS.find(p => p.id === selectedProvider)?.label ?? selectedProvider}로 초안 생성하기</>}
                 </button>
               ) : (
                 <button onClick={() => { setPhase("input"); setDrafts([]); setChannelMap({}); }}
