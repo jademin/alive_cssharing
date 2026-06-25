@@ -1,0 +1,25 @@
+import { NextRequest, NextResponse } from "next/server";
+import { listResults, saveResult, newResultId, resolveToken } from "@/lib/resultStorage";
+
+export async function GET(req: NextRequest) {
+  try {
+    const token = resolveToken(req);
+    const results = await listResults(token);
+    return NextResponse.json({ results });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const { topic, channels } = await req.json();
+    if (!topic || !channels) return NextResponse.json({ error: "topic, channels 필드가 필요합니다." }, { status: 400 });
+    const token = resolveToken(req);
+    const entry = { id: newResultId(), topic, createdAt: new Date().toISOString(), channels };
+    await saveResult(entry, token);
+    return NextResponse.json({ ok: true, id: entry.id });
+  } catch (e) {
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}

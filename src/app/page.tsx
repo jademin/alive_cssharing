@@ -77,10 +77,19 @@ export default function HomePage() {
       const data = await res.json();
 
       const newResults: Record<ChannelKey, ChannelResult> = { ...results };
+      const channelsMap: Partial<Record<string, string>> = {};
       for (const { channel, content } of data.results) {
         newResults[channel as ChannelKey] = { status: "done", content };
+        channelsMap[channel] = content;
       }
       setResults(newResults);
+
+      // 결과물 자동 저장
+      void fetch("/api/results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: topic.trim(), channels: channelsMap }),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.");
       setResults(
