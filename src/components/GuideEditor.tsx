@@ -146,29 +146,35 @@ function FileTreeNode({
 
   if (node.type === "dir") {
     return (
-      <div>
+      <div
+        className={`relative mx-1 rounded-xl transition-all ${isDropTarget ? "bg-blue-50" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation(); // 중첩 폴더 시 안쪽 폴더 우선
+          drag.setDropTarget(node.path);
+          if (!open) setOpen(true); // 드래그 중 자동 펼침
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+            if (drag.dropTarget === node.path) drag.setDropTarget(null);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          drag.onDrop(node.path);
+        }}
+      >
+        {/* 드롭 영역 시각적 테두리 */}
+        {isDropTarget && (
+          <div className="absolute inset-0 rounded-xl border-2 border-dashed border-blue-400 pointer-events-none z-10" />
+        )}
+
         <div
-          className={`group flex items-center gap-1 mx-1 rounded-lg transition-colors ${
-            isDropTarget
-              ? "bg-blue-100 ring-1 ring-blue-400"
-              : "hover:bg-slate-50"
+          className={`group flex items-center gap-1 rounded-lg transition-colors ${
+            isDropTarget ? "bg-blue-100" : "hover:bg-slate-50"
           }`}
           style={{ paddingLeft: pl, paddingRight: "4px" }}
-          onDragOver={(e) => {
-            e.preventDefault(); // 반드시 state 체크 없이 호출해야 drop이 동작함
-            e.stopPropagation();
-            drag.setDropTarget(node.path);
-          }}
-          onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-              if (drag.dropTarget === node.path) drag.setDropTarget(null);
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            drag.onDrop(node.path);
-          }}
         >
           <button
             onClick={() => setOpen(!open)}
@@ -177,11 +183,12 @@ function FileTreeNode({
             {open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
             <Folder className={`w-3 h-3 shrink-0 ${isDropTarget ? "text-blue-500" : "text-amber-400"}`} />
             <span className="uppercase tracking-wider truncate">{node.name}</span>
-            {isDropTarget && <span className="ml-auto text-[10px] text-blue-600 font-medium">여기에 놓기</span>}
+            {isDropTarget && <span className="ml-auto text-[10px] text-blue-600 font-medium pr-1">여기에 놓기</span>}
           </button>
           {!isDropTarget && (
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(node.path, true); }}
+              onMouseDown={(e) => e.stopPropagation()}
               className="opacity-0 group-hover:opacity-100 shrink-0 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity"
               aria-label="폴더 삭제"
               title="폴더 삭제"
@@ -202,15 +209,17 @@ function FileTreeNode({
       draggable={true}
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", node.path); // 크로스브라우저 필수
+        e.dataTransfer.setData("text/plain", node.path);
         drag.onDragStart(node.path);
       }}
       onDragEnd={drag.onDragEnd}
       className={`group flex items-center gap-1 rounded-lg mx-1 transition-colors duration-150 ${
-        isDragging ? "opacity-40 bg-slate-100" : isSelected ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"
+        isDragging ? "opacity-30 scale-95" : isSelected ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"
       }`}
-      style={{ paddingLeft: pl, paddingRight: "4px", cursor: "grab" }}
+      style={{ paddingLeft: pl, paddingRight: "4px", cursor: isDragging ? "grabbing" : "grab" }}
     >
+      {/* 드래그 핸들 (호버 시 표시) */}
+      <span className="opacity-0 group-hover:opacity-40 text-slate-400 shrink-0 select-none text-[10px] leading-none pointer-events-none">⠿</span>
       <FileText className="w-3 h-3 shrink-0 text-slate-400 pointer-events-none" />
       <button className="flex-1 py-1.5 text-left text-xs truncate cursor-pointer" onClick={() => onSelect(node.path)}>
         {node.name}
