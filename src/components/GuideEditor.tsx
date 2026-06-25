@@ -155,8 +155,7 @@ function FileTreeNode({
           }`}
           style={{ paddingLeft: pl, paddingRight: "4px" }}
           onDragOver={(e) => {
-            if (!drag.draggingFile) return;
-            e.preventDefault();
+            e.preventDefault(); // 반드시 state 체크 없이 호출해야 drop이 동작함
             e.stopPropagation();
             drag.setDropTarget(node.path);
           }}
@@ -203,6 +202,7 @@ function FileTreeNode({
       draggable={true}
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", node.path); // 크로스브라우저 필수
         drag.onDragStart(node.path);
       }}
       onDragEnd={drag.onDragEnd}
@@ -217,6 +217,7 @@ function FileTreeNode({
       </button>
       <button
         onClick={(e) => { e.stopPropagation(); onToggleInclude(node.path); }}
+        onMouseDown={(e) => e.stopPropagation()}
         title={isIncluded ? "AI 프롬프트에서 제외" : "AI 프롬프트에 포함"}
         className={`opacity-0 group-hover:opacity-100 shrink-0 cursor-pointer transition-opacity p-0.5 ${isIncluded ? "text-emerald-500" : "text-slate-300"}`}
       >
@@ -224,6 +225,7 @@ function FileTreeNode({
       </button>
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(node.path); }}
+        onMouseDown={(e) => e.stopPropagation()}
         className="opacity-0 group-hover:opacity-100 shrink-0 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity"
         aria-label="파일 삭제"
       >
@@ -627,7 +629,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
           {/* 파일 트리 + 루트 드롭 영역 */}
           <div
             className={`flex-1 overflow-y-auto py-2 transition-colors ${dropTarget === "" && draggingFile ? "bg-slate-50" : ""}`}
-            onDragOver={(e) => { if (!draggingFile) return; e.preventDefault(); setDropTarget(""); }}
+            onDragOver={(e) => { e.preventDefault(); if (draggingFile) setDropTarget(""); }}
             onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null); }}
             onDrop={(e) => { e.preventDefault(); void handleFileDrop(""); }}
           >
