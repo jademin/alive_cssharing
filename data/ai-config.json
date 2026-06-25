@@ -1,5 +1,17 @@
 {
-  "provider": "mock",
-  "model": "",
-  "apiKey": ""
+  "activeProvider": "mock",
+  "providers": {
+    "claude": {
+      "apiKey": "",
+      "model": "claude-sonnet-4-6"
+    },
+    "openai": {
+      "apiKey": "",
+      "model": "gpt-4o"
+    },
+    "gemini": {
+      "apiKey": "REDACTED",
+      "model": "gemini-2.5-flash"
+    }
+  }
 }
