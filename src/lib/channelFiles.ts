@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { type ChannelKey, CHANNELS } from "./channels";
-import { isVercelProd, githubWrite, githubDelete, githubRead, githubListDir } from "./githubStorage";
+import { isVercelProd, githubWrite, githubDelete, githubRead, githubReadBase64, githubListDir } from "./githubStorage";
 
 const CHANNEL_DIR = path.join(process.cwd(), "data", "channels");
 
@@ -19,6 +19,11 @@ export interface FileNode {
   type: "file" | "dir";
   children?: FileNode[];
   included: boolean;
+}
+
+export function isTextFile(fileName: string): boolean {
+  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
+  return ["md", "txt", "json", "csv", "html", "xml", "js", "ts", "css"].includes(ext);
 }
 
 export async function getChannelMeta(channel: ChannelKey, token?: string): Promise<ChannelMeta> {
@@ -44,7 +49,8 @@ export async function getChannelFileTree(channel: ChannelKey, token?: string): P
         if (entry.type === "dir") {
           const children = await walkGithub(entry.path, relPath);
           nodes.push({ name: entry.name, path: relPath, type: "dir", included: false, children });
-        } else if (entry.name.endsWith(".md")) {
+        } else {
+          // 모든 파일 표시 (.md 한정 제거)
           nodes.push({
             name: entry.name,
             path: relPath,
@@ -68,7 +74,7 @@ export async function getChannelFileTree(channel: ChannelKey, token?: string): P
       if (entry.isDirectory()) {
         const children = await walk(path.join(dir, entry.name), relPath);
         nodes.push({ name: entry.name, path: relPath, type: "dir", included: false, children });
-      } else if (entry.name.endsWith(".md")) {
+      } else {
         nodes.push({
           name: entry.name,
           path: relPath,
@@ -82,6 +88,7 @@ export async function getChannelFileTree(channel: ChannelKey, token?: string): P
   return walk(root, "");
 }
 
+/** 텍스트 파일 읽기 */
 export async function readChannelFile(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
   if (isVercelProd()) {
     const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
@@ -92,20 +99,39 @@ export async function readChannelFile(channel: ChannelKey, filePath: string, tok
   return fs.readFile(full, "utf-8");
 }
 
+/** 바이너리 파일 읽기 → raw base64 반환 */
+export async function readChannelFileBase64(channel: ChannelKey, filePath: string, token?: string): Promise<string> {
+  if (isVercelProd()) {
+    const safe = filePath.replace(/\\/g, "/").replace(/(^|\/)\.\.(?=\/|$)/g, "");
+    return githubReadBase64(`data/channels/${channel}/${safe}`, token);
+  }
+  const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
+  const full = path.join(CHANNEL_DIR, channel, safe);
+  const buf = await fs.readFile(full);
+  return buf.toString("base64");
+}
+
+/** 파일 쓰기
+ *  isBase64=true → content는 이미 base64 인코딩된 값 (바이너리 업로드용) */
 export async function writeChannelFile(
   channel: ChannelKey,
   filePath: string,
   content: string,
-  token?: string
+  token?: string,
+  isBase64 = false
 ): Promise<void> {
   const safe = path.normalize(filePath).replace(/^(\.\.[/\\])+/, "");
   if (isVercelProd()) {
-    await githubWrite(`data/channels/${channel}/${safe.replace(/\\/g, "/")}`, content, token);
+    await githubWrite(`data/channels/${channel}/${safe.replace(/\\/g, "/")}`, content, token, isBase64);
     return;
   }
   const full = path.join(CHANNEL_DIR, channel, safe);
   await fs.mkdir(path.dirname(full), { recursive: true });
-  await fs.writeFile(full, content, "utf-8");
+  if (isBase64) {
+    await fs.writeFile(full, Buffer.from(content, "base64"));
+  } else {
+    await fs.writeFile(full, content, "utf-8");
+  }
 }
 
 export async function deleteChannelFile(channel: ChannelKey, filePath: string, token?: string): Promise<void> {
@@ -135,8 +161,14 @@ export async function moveChannelFile(
   targetPath: string,
   token?: string
 ): Promise<void> {
-  const content = await readChannelFile(channel, sourcePath, token);
-  await writeChannelFile(channel, targetPath, content, token);
+  // 바이너리 파일은 base64로 이동
+  if (!isTextFile(sourcePath.split("/").pop() ?? "")) {
+    const b64 = await readChannelFileBase64(channel, sourcePath, token);
+    await writeChannelFile(channel, targetPath, b64, token, true);
+  } else {
+    const content = await readChannelFile(channel, sourcePath, token);
+    await writeChannelFile(channel, targetPath, content, token, false);
+  }
   await deleteChannelFile(channel, sourcePath, token);
 }
 
@@ -164,6 +196,7 @@ export async function buildSystemPrompt(channel: ChannelKey, token?: string): Pr
   const parts: string[] = [];
 
   for (const relPath of meta.include) {
+    if (!isTextFile(relPath.split("/").pop() ?? "")) continue; // 바이너리는 프롬프트에서 제외
     try {
       const content = await readChannelFile(channel, relPath, token);
       parts.push(`\n\n${"=".repeat(60)}\n# 가이드 파일: ${relPath}\n${"=".repeat(60)}\n\n${content}`);

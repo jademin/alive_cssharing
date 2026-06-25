@@ -30,13 +30,14 @@ async function getFileSha(repoPath: string, token: string): Promise<string | nul
   return data.sha ?? null;
 }
 
-/** 파일을 GitHub에 커밋합니다 (신규·수정 모두 처리) */
-export async function githubWrite(repoPath: string, content: string, token?: string): Promise<void> {
+/** 파일을 GitHub에 커밋합니다 (신규·수정 모두 처리)
+ *  alreadyBase64=true 이면 content를 그대로 GitHub에 전달 (바이너리 업로드용) */
+export async function githubWrite(repoPath: string, content: string, token?: string, alreadyBase64 = false): Promise<void> {
   const tok = resolveToken(token);
   const sha = await getFileSha(repoPath, tok);
   const body: Record<string, string> = {
     message: `chore: update ${repoPath.split("/").pop()}`,
-    content: Buffer.from(content, "utf-8").toString("base64"),
+    content: alreadyBase64 ? content : Buffer.from(content, "utf-8").toString("base64"),
     branch: GITHUB_BRANCH,
   };
   if (sha) body.sha = sha;
@@ -61,8 +62,14 @@ export async function githubWrite(repoPath: string, content: string, token?: str
   }
 }
 
-/** GitHub에서 파일 내용을 읽습니다 (Vercel 읽기용) */
+/** GitHub에서 파일 내용을 읽습니다 (텍스트 디코딩) */
 export async function githubRead(repoPath: string, token?: string): Promise<string> {
+  const raw = await githubReadBase64(repoPath, token);
+  return Buffer.from(raw, "base64").toString("utf-8");
+}
+
+/** GitHub에서 파일의 raw base64 콘텐츠를 그대로 반환합니다 (바이너리용) */
+export async function githubReadBase64(repoPath: string, token?: string): Promise<string> {
   const tok = token ?? process.env.GITHUB_TOKEN;
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
@@ -77,7 +84,8 @@ export async function githubRead(repoPath: string, token?: string): Promise<stri
   if (!res.ok) throw new Error(`GitHub 읽기 실패 (${repoPath}): ${res.status}`);
   const json = await res.json();
   if (typeof json.content !== "string") throw new Error("GitHub 응답에 content가 없습니다.");
-  return Buffer.from(json.content, "base64").toString("utf-8");
+  // GitHub API는 줄바꿈 포함 base64를 반환하므로 제거
+  return json.content.replace(/\n/g, "");
 }
 
 export interface GithubDirEntry {

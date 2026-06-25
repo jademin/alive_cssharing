@@ -148,10 +148,23 @@ function TreeNode({ node, depth, dropOn, dragging, included, selected, onSelect,
   );
 }
 
+// ─── 파일 타입 헬퍼 ──────────────────────────────────────────
+function isTextExt(name: string) {
+  return /\.(md|txt|json|csv|html|xml|js|ts|css)$/i.test(name);
+}
+function isImageExt(name: string) {
+  return /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(name);
+}
+function getMime(name: string) {
+  const e = name.split(".").pop()?.toLowerCase() ?? "";
+  return ({ png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg", gif:"image/gif", webp:"image/webp", svg:"image/svg+xml" } as Record<string,string>)[e] ?? "application/octet-stream";
+}
+
 // ─── 파일 추가 모달 (다중 업로드 지원) ───────────────────────
 interface UploadEntry {
-  name: string;       // 편집 가능한 저장 파일명
-  content: string;
+  name: string;
+  content: string;       // base64 (모든 파일 공통)
+  isBase64: boolean;     // true = 바이너리, false = 텍스트
   status: "pending" | "uploading" | "ok" | "err";
   errMsg?: string;
 }
@@ -166,20 +179,26 @@ function ImportModal({ channel, folders, onDone, onClose }: {
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const toMd = (n: string) => (n.endsWith(".md") ? n : n.replace(/\.[^.]+$/, "") + ".md");
-
+  // 모든 파일을 base64로 읽기 (텍스트/바이너리 구분 없이 통일)
   const onFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     if (!files.length) return;
-    // 각 파일을 FileReader로 읽어 entries에 추가
     files.forEach(f => {
       const reader = new FileReader();
       reader.onload = ev => {
-        setEntries(prev => [...prev, { name: toMd(f.name), content: ev.target?.result as string ?? "", status: "pending" }]);
+        const dataUrl = ev.target?.result as string ?? "";
+        // "data:image/png;base64,XXXX" → "XXXX"
+        const base64 = dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
+        setEntries(prev => [...prev, {
+          name: f.name,
+          content: base64,
+          isBase64: true,
+          status: "pending",
+        }]);
       };
-      reader.readAsText(f, "utf-8");
+      reader.readAsDataURL(f); // 텍스트·바이너리 모두 base64로 통일
     });
-    e.target.value = ""; // 같은 파일 재선택 허용
+    e.target.value = "";
   };
 
   const removeEntry = (i: number) => setEntries(prev => prev.filter((_, idx) => idx !== i));
@@ -188,27 +207,30 @@ function ImportModal({ channel, folders, onDone, onClose }: {
   const addManual = () => {
     const n = manualName.trim();
     if (!n || !manualBody.trim()) return;
-    setEntries(prev => [...prev, { name: toMd(n), content: manualBody, status: "pending" }]);
+    const name = n.includes(".") ? n : `${n}.md`;
+    // 직접 작성은 텍스트 → base64 변환
+    const base64 = btoa(unescape(encodeURIComponent(manualBody)));
+    setEntries(prev => [...prev, { name, content: base64, isBase64: true, status: "pending" }]);
     setManualName(""); setManualBody("");
   };
 
   const uploadAll = async () => {
     // 업로드할 항목 인덱스 목록을 미리 확정 (업로드 중 entries 변경 방지)
     const targets = entries
-      .map((e, i) => ({ i, name: e.name, content: e.content, status: e.status }))
+      .map((e, i) => ({ i, name: e.name, content: e.content, isBase64: e.isBase64, status: e.status }))
       .filter(e => e.status === "pending" || e.status === "err");
     if (!targets.length) return;
     setBusy(true);
 
     // GitHub API는 동시 커밋 시 parent 충돌 → 반드시 순차 업로드
-    for (const { i, name, content } of targets) {
+    for (const { i, name, content, isBase64 } of targets) {
       setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "uploading", errMsg: undefined } : e));
       const filePath = folder ? `${folder}/${name}` : name;
       try {
         const r = await fetch(`/api/channels/${channel}/files/${filePath}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, encoding: isBase64 ? "base64" : "utf-8" }),
         });
         if (!r.ok) {
           const d = await r.json().catch(() => ({}));
@@ -255,7 +277,7 @@ function ImportModal({ channel, folders, onDone, onClose }: {
           {/* 파일 선택 버튼 */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">파일 선택 (여러 개 동시 선택 가능)</label>
-            <input ref={fileRef} type="file" accept=".md,.txt" multiple className="hidden" onChange={onFilesSelected} />
+            <input ref={fileRef} type="file" multiple className="hidden" onChange={onFilesSelected} />
             <button onClick={() => fileRef.current?.click()}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-sm text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer w-full justify-center transition-colors">
               <Upload className="w-4 h-4" />파일 선택 (Ctrl+클릭으로 여러 개)
@@ -347,6 +369,8 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
   const [tree, setTree] = useState<FileNode[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [content, setContent] = useState(""); const [saved, setSaved] = useState("");
+  const [fileEncoding, setFileEncoding] = useState<"utf-8" | "base64">("utf-8");
+  const [fileMime, setFileMime] = useState<string>("text/plain");
   const [loading, setLoading] = useState(true); const [fileBusy, setFileBusy] = useState(false);
   const [saving, setSaving] = useState(false); const [saveStatus, setSaveStatus] = useState<"idle" | "ok" | "err">("idle");
   const [view, setView] = useState<"edit" | "split" | "preview">("split");
@@ -384,7 +408,11 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     try {
       const r = await fetch(`/api/channels/${channel}/files/${p}`);
       const d = await r.json();
-      setContent(d.content ?? ""); setSaved(d.content ?? "");
+      const enc: "utf-8" | "base64" = d.encoding === "base64" ? "base64" : "utf-8";
+      setContent(d.content ?? "");
+      setSaved(d.content ?? "");
+      setFileEncoding(enc);
+      setFileMime(d.mimeType ?? "text/plain");
     } catch { setContent(""); setSaved(""); } finally { setFileBusy(false); }
   }, [channel]);
 
@@ -690,6 +718,47 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
 
         {/* 에디터 */}
         {selected ? (
+          fileEncoding === "base64" ? (
+            /* ── 바이너리 파일 뷰어 ── */
+            <div className="flex-1 glass-card rounded-2xl overflow-hidden flex flex-col">
+              <div className="px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex items-center gap-2">
+                <FileText className="w-3.5 h-3.5 text-slate-500" />
+                <span className="text-xs font-medium text-slate-700 truncate">{selected}</span>
+                <span className="text-xs text-slate-400 ml-auto">{fileMime}</span>
+              </div>
+              <div className="flex-1 flex flex-col items-center justify-center p-6 bg-slate-50 gap-4">
+                {fileBusy ? (
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
+                ) : isImageExt(selected) && content ? (
+                  /* 이미지 미리보기 */
+                  <img
+                    src={`data:${getMime(selected)};base64,${content}`}
+                    alt={selected}
+                    className="max-w-full max-h-[50vh] object-contain rounded-xl shadow-md"
+                  />
+                ) : (
+                  /* 기타 바이너리 */
+                  <div className="flex flex-col items-center gap-3 text-center">
+                    <div className="w-14 h-14 rounded-2xl bg-slate-200 flex items-center justify-center">
+                      <FileText className="w-7 h-7 text-slate-500" />
+                    </div>
+                    <p className="font-medium text-slate-700">{selected.split("/").pop()}</p>
+                    <p className="text-sm text-slate-400">{fileMime}</p>
+                  </div>
+                )}
+                {content && (
+                  <a
+                    href={`data:${fileMime};base64,${content}`}
+                    download={selected.split("/").pop()}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-700 text-white text-sm font-medium hover:bg-slate-900 cursor-pointer"
+                  >
+                    다운로드
+                  </a>
+                )}
+              </div>
+            </div>
+          ) : (
+          /* ── 텍스트 에디터 ── */
           <div className={`flex-1 grid gap-4 min-w-0 ${view === "split" ? "grid-cols-2" : "grid-cols-1"}`}>
             {(view === "edit" || view === "split") && (
               <div className="glass-card rounded-2xl overflow-hidden flex flex-col">
@@ -719,6 +788,7 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
               </div>
             )}
           </div>
+          )
         ) : (
           <div className="flex-1 glass-card rounded-2xl flex flex-col items-center justify-center gap-4 text-center p-8">
             <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center">
