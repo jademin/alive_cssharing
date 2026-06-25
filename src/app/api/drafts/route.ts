@@ -151,7 +151,10 @@ export async function POST(req: NextRequest) {
 
     const pc = config.providers[provider as ProviderKey];
     if (!pc?.apiKey) {
-      return NextResponse.json({ drafts: mockDrafts(topic.trim()) });
+      return NextResponse.json(
+        { error: `${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력해주세요.` },
+        { status: 400 }
+      );
     }
 
     const system = `당신은 마케팅 콘텐츠 전략가입니다. 주어진 주제로 3가지 서로 다른 각도의 초안을 작성합니다.
@@ -164,13 +167,9 @@ export async function POST(req: NextRequest) {
 
     const user = `주제: "${topic.trim()}"\n\n위 주제로 마케팅 콘텐츠 초안 3가지를 JSON 형식으로 작성해주세요.`;
 
-    try {
-      const raw = await callAI(provider as ProviderKey, pc.apiKey, pc.model, system, user);
-      const drafts = parseDrafts(raw, topic.trim());
-      return NextResponse.json({ drafts });
-    } catch {
-      return NextResponse.json({ drafts: mockDrafts(topic.trim()) });
-    }
+    const raw = await callAI(provider as ProviderKey, pc.apiKey, pc.model, system, user);
+    const drafts = parseDrafts(raw, topic.trim());
+    return NextResponse.json({ drafts });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

@@ -210,13 +210,14 @@ export default function HomePage() {
         available.push("mock");
         setAvailableProviders(available);
 
-        // 저장된 activeProvider 우선, 없으면 첫 번째 실 API 제공사, 없으면 mock
+        // localStorage > 저장된 activeProvider > 첫 번째 실 API 제공사 > mock
+        const lsProvider = localStorage.getItem("csai_provider") as AIProvider | null;
         const configProvider = data.activeProvider as AIProvider | undefined;
         const firstReal = available.find(p => p !== "mock");
         const defaultProvider =
-          (configProvider && configProvider !== "mock" && available.includes(configProvider))
-            ? configProvider
-            : firstReal ?? "mock";
+          (lsProvider && available.includes(lsProvider)) ? lsProvider :
+          (configProvider && configProvider !== "mock" && available.includes(configProvider)) ? configProvider :
+          firstReal ?? "mock";
         setSelectedProvider(defaultProvider);
       } catch {
         setAvailableProviders(["mock"]);
@@ -393,7 +394,7 @@ export default function HomePage() {
                       return (
                         <button
                           key={p.id}
-                          onClick={() => setSelectedProvider(p.id)}
+                          onClick={() => { setSelectedProvider(p.id); localStorage.setItem("csai_provider", p.id); }}
                           disabled={phase === "drafts"}
                           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer disabled:opacity-50 disabled:cursor-default ${
                             isActive ? p.activeClass : "bg-white border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700"
