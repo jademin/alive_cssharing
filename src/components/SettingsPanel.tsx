@@ -102,17 +102,22 @@ function ProviderSection({ providerKey, state }: {
   };
 
   const handleTest = async () => {
-    if (apiKeyInput.trim()) await handleSave();
     setTesting(true);
     setTestResult(null);
     try {
+      const testBody: Record<string, string> = { provider: providerKey };
+      if (apiKeyInput.trim()) testBody.apiKey = apiKeyInput.trim();
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: providerKey }),
+        body: JSON.stringify(testBody),
       });
       const data = await res.json() as { ok: boolean; message: string };
       setTestResult(data);
+      // 테스트 성공 + 새 키가 입력된 경우 자동 저장
+      if (data.ok && apiKeyInput.trim()) {
+        await handleSave();
+      }
     } catch {
       setTestResult({ ok: false, message: "연결 테스트 실패" });
     } finally {

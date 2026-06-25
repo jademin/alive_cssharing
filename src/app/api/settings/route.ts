@@ -75,21 +75,28 @@ export async function PUT(req: NextRequest) {
 }
 
 /** POST — API 연결 테스트
- *  body: { provider: "claude" | "openai" | "gemini" }
+ *  body: { provider: "claude" | "openai" | "gemini", apiKey?: string }
+ *  apiKey를 직접 전달하면 저장 없이도 테스트 가능
  */
 export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => ({})) as { provider?: string; apiKey?: string };
   const config = await loadAIConfig();
-  const body = await req.json().catch(() => ({})) as { provider?: string };
   const provider = (body.provider ?? config.activeProvider) as AIConfig["activeProvider"];
 
   if (provider === "mock") {
     return NextResponse.json({ ok: true, message: "Mock 모드 — AI API 없이 테스트 콘텐츠를 생성합니다." });
   }
 
-  const pc = config.providers[provider as ProviderKey];
-  if (!pc?.apiKey) {
+  // apiKey를 body에서 직접 받거나 저장된 config에서 읽음
+  const apiKey = body.apiKey?.trim() || config.providers[provider as ProviderKey]?.apiKey;
+  const model = config.providers[provider as ProviderKey]?.model;
+
+  if (!apiKey) {
     return NextResponse.json({ ok: false, message: `${provider} API 키가 설정되지 않았습니다.` }, { status: 400 });
   }
+
+  // 하위 호환용 임시 pc 객체
+  const pc = { apiKey, model };
 
   try {
     if (provider === "claude") {
