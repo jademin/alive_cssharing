@@ -148,72 +148,187 @@ function TreeNode({ node, depth, dropOn, dragging, included, selected, onSelect,
   );
 }
 
-// ─── 파일 추가 모달 ──────────────────────────────────────────
+// ─── 파일 추가 모달 (다중 업로드 지원) ───────────────────────
+interface UploadEntry {
+  name: string;       // 편집 가능한 저장 파일명
+  content: string;
+  status: "pending" | "uploading" | "ok" | "err";
+  errMsg?: string;
+}
+
 function ImportModal({ channel, folders, onDone, onClose }: {
   channel: ChannelKey; folders: FileNode[]; onDone: () => Promise<void>; onClose: () => void;
 }) {
-  const [name, setName] = useState(""); const [body, setBody] = useState(""); const [folder, setFolder] = useState("");
-  const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
+  const [entries, setEntries] = useState<UploadEntry[]>([]);
+  const [manualName, setManualName] = useState("");
+  const [manualBody, setManualBody] = useState("");
+  const [folder, setFolder] = useState("");
+  const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const readFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]; if (!f) return; setName(f.name);
-    const r = new FileReader(); r.onload = ev => setBody(ev.target?.result as string ?? ""); r.readAsText(f, "utf-8");
+
+  const toMd = (n: string) => (n.endsWith(".md") ? n : n.replace(/\.[^.]+$/, "") + ".md");
+
+  const onFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    // 각 파일을 FileReader로 읽어 entries에 추가
+    files.forEach(f => {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        setEntries(prev => [...prev, { name: toMd(f.name), content: ev.target?.result as string ?? "", status: "pending" }]);
+      };
+      reader.readAsText(f, "utf-8");
+    });
+    e.target.value = ""; // 같은 파일 재선택 허용
   };
-  const save = async () => {
-    const n = name.trim(); if (!n || !body.trim()) { setErr("파일명과 내용을 입력해주세요."); return; }
-    const safe = n.endsWith(".md") ? n : `${n}.md`;
-    const path = folder ? `${folder}/${safe}` : safe;
-    setBusy(true); setErr("");
-    try {
-      const r = await fetch(`/api/channels/${channel}/files/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: body }) });
-      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error ?? `HTTP ${r.status}`); }
-      onClose(); void onDone();
-    } catch (e) { setErr(e instanceof Error ? e.message : "저장 실패"); } finally { setBusy(false); }
+
+  const removeEntry = (i: number) => setEntries(prev => prev.filter((_, idx) => idx !== i));
+  const renameEntry = (i: number, name: string) => setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, name } : e));
+
+  const addManual = () => {
+    const n = manualName.trim();
+    if (!n || !manualBody.trim()) return;
+    setEntries(prev => [...prev, { name: toMd(n), content: manualBody, status: "pending" }]);
+    setManualName(""); setManualBody("");
   };
+
+  const uploadAll = async () => {
+    const pending = entries.filter(e => e.status === "pending" || e.status === "err");
+    if (!pending.length) return;
+    setBusy(true);
+
+    await Promise.all(
+      entries.map(async (entry, i) => {
+        if (entry.status !== "pending" && entry.status !== "err") return;
+        setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "uploading" } : e));
+        const filePath = folder ? `${folder}/${entry.name}` : entry.name;
+        try {
+          const r = await fetch(`/api/channels/${channel}/files/${filePath}`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: entry.content }),
+          });
+          if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error ?? `HTTP ${r.status}`); }
+          setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "ok" } : e));
+        } catch (err) {
+          setEntries(prev => prev.map((e, idx) => idx === i ? { ...e, status: "err", errMsg: err instanceof Error ? err.message : "실패" } : e));
+        }
+      })
+    );
+
+    setBusy(false);
+    // 모두 성공하면 닫기
+    setEntries(prev => {
+      if (prev.every(e => e.status === "ok")) { void onDone(); onClose(); }
+      return prev;
+    });
+    void onDone(); // 일부만 성공해도 트리 새로고침
+  };
+
+  const allOk = entries.length > 0 && entries.every(e => e.status === "ok");
+  const hasErr = entries.some(e => e.status === "err");
+  const pendingCount = entries.filter(e => e.status === "pending" || e.status === "err").length;
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between shrink-0">
           <h2 className="font-semibold text-slate-900">파일 추가</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer text-slate-500"><X className="w-4 h-4" /></button>
         </div>
-        <div className="p-6 space-y-4">
+
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          {/* 저장 위치 */}
           <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">파일에서 불러오기</label>
-            <div className="flex gap-2">
-              <input ref={fileRef} type="file" accept=".md,.txt" className="hidden" onChange={readFile} />
-              <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 cursor-pointer"><Upload className="w-4 h-4" />파일 선택</button>
-              {name && <span className="text-sm text-slate-500 self-center truncate">{name}</span>}
-            </div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">저장 위치 (전체 공통)</label>
+            <select value={folder} onChange={e => setFolder(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">/ 채널 루트</option>
+              {folders.map(f => <option key={f.path} value={f.path}>📁 {f.path}/</option>)}
+            </select>
           </div>
-          {folders.length > 0 && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">저장 위치</label>
-              <select value={folder} onChange={e => setFolder(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">/ 채널 루트</option>
-                {folders.map(f => <option key={f.path} value={f.path}>📁 {f.path}/</option>)}
-              </select>
+
+          {/* 파일 선택 버튼 */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">파일 선택 (여러 개 동시 선택 가능)</label>
+            <input ref={fileRef} type="file" accept=".md,.txt" multiple className="hidden" onChange={onFilesSelected} />
+            <button onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-slate-200 text-sm text-slate-600 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer w-full justify-center transition-colors">
+              <Upload className="w-4 h-4" />파일 선택 (Ctrl+클릭으로 여러 개)
+            </button>
+          </div>
+
+          {/* 선택된 파일 목록 */}
+          {entries.length > 0 && (
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">업로드 목록 ({entries.length}개)</label>
+              {entries.map((entry, i) => (
+                <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm ${
+                  entry.status === "ok" ? "border-emerald-200 bg-emerald-50" :
+                  entry.status === "err" ? "border-red-200 bg-red-50" :
+                  entry.status === "uploading" ? "border-blue-200 bg-blue-50" :
+                  "border-slate-200 bg-slate-50"}`}>
+                  {/* 상태 아이콘 */}
+                  {entry.status === "ok" && <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />}
+                  {entry.status === "err" && <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />}
+                  {entry.status === "uploading" && <Loader2 className="w-4 h-4 text-blue-500 animate-spin shrink-0" />}
+                  {entry.status === "pending" && <FileText className="w-4 h-4 text-slate-400 shrink-0" />}
+                  {/* 파일명 편집 */}
+                  <div className="flex items-center gap-1 flex-1 min-w-0">
+                    {folder && <span className="text-slate-400 text-xs shrink-0">{folder}/</span>}
+                    <input
+                      value={entry.name}
+                      onChange={e2 => renameEntry(i, e2.target.value)}
+                      disabled={entry.status !== "pending" && entry.status !== "err"}
+                      className="flex-1 bg-transparent border-none outline-none text-xs font-mono text-slate-700 disabled:text-slate-500 min-w-0"
+                    />
+                  </div>
+                  {entry.errMsg && <span className="text-xs text-red-600 shrink-0">{entry.errMsg}</span>}
+                  {(entry.status === "pending" || entry.status === "err") && (
+                    <button onClick={() => removeEntry(i)} className="p-0.5 text-slate-400 hover:text-red-500 cursor-pointer shrink-0"><X className="w-3.5 h-3.5" /></button>
+                  )}
+                </div>
+              ))}
             </div>
           )}
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">파일명 *</label>
-            <div className="flex items-center gap-2">
-              {folder && <span className="text-sm text-slate-400 shrink-0">{folder}/</span>}
-              <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="guide.md" className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+          {/* 직접 작성 */}
+          <details className="group">
+            <summary className="text-xs font-semibold text-slate-500 uppercase tracking-wider cursor-pointer select-none hover:text-slate-700">
+              + 직접 작성하여 추가
+            </summary>
+            <div className="mt-3 space-y-3">
+              <div className="flex items-center gap-2">
+                {folder && <span className="text-sm text-slate-400 shrink-0">{folder}/</span>}
+                <input type="text" value={manualName} onChange={e => setManualName(e.target.value)} placeholder="파일명.md" className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <textarea value={manualBody} onChange={e => setManualBody(e.target.value)} placeholder="내용 입력..." rows={5}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+              <button onClick={addManual} disabled={!manualName.trim() || !manualBody.trim()}
+                className="px-4 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 disabled:opacity-40 cursor-pointer">
+                목록에 추가
+              </button>
             </div>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">내용 *</label>
-            <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="내용을 입력하거나 파일을 선택하세요..." rows={8} className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-          </div>
-          {err && <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2"><AlertCircle className="w-4 h-4 shrink-0" />{err}</div>}
+          </details>
         </div>
-        <div className="px-6 pb-5 flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-100 cursor-pointer">취소</button>
-          <button onClick={save} disabled={busy} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 cursor-pointer">
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {busy ? "저장 중..." : "채널에 추가"}
-          </button>
+
+        <div className="px-6 pb-5 pt-3 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
+          <span className="text-xs text-slate-400">
+            {entries.length === 0 ? "파일을 선택하거나 직접 작성하세요" :
+             allOk ? "✓ 모두 업로드 완료" :
+             hasErr ? "일부 실패 — 재시도 가능" :
+             `${pendingCount}개 업로드 대기 중`}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-100 cursor-pointer">
+              {allOk ? "닫기" : "취소"}
+            </button>
+            {!allOk && (
+              <button onClick={uploadAll} disabled={busy || pendingCount === 0}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 cursor-pointer">
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                {busy ? "업로드 중..." : `${pendingCount}개 업로드`}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
