@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Save, CheckCircle, AlertCircle, Loader2, Zap, Eye, EyeOff, ExternalLink, Github, Trash2,
+  Save, CheckCircle, AlertCircle, Loader2, Zap, Eye, EyeOff, ExternalLink, KeyRound, Trash2,
 } from "lucide-react";
 
 type Provider = "mock" | "claude" | "openai";
@@ -273,7 +273,7 @@ export default function SettingsPanel() {
       <div className="glass-card rounded-2xl p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Github className="w-4 h-4 text-slate-700" />
+            <KeyRound className="w-4 h-4 text-slate-700" />
             <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider">GitHub 연동</h2>
           </div>
           {githubStatus?.ok && (
