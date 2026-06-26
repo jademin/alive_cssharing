@@ -269,7 +269,7 @@ ${draft}
 
   if (provider !== "mock") {
     const pc = resolveProvider(req, provider as ProviderKey)
-      ?? await loadAIConfig().then(c => c.providers[provider as ProviderKey]).catch(() => null);
+      ?? await loadAIConfig(resolveGithubToken(req)).then(c => c.providers[provider as ProviderKey]).catch(() => null);
 
     if (!pc?.apiKey) {
       throw new Error(`${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.`);
@@ -340,7 +340,7 @@ async function runAgentPipeline(
 
   // Provider 인증
   const pc = resolveProvider(req, provider as ProviderKey)
-    ?? await loadAIConfig().then(c => c.providers[provider as ProviderKey]).catch(() => null);
+    ?? await loadAIConfig(token).then(c => c.providers[provider as ProviderKey]).catch(() => null);
   if (!pc?.apiKey) {
     throw new Error(`${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.`);
   }

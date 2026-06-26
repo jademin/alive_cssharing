@@ -47,11 +47,13 @@ function migrateOldConfig(old: Record<string, string>): AIConfig {
   return config;
 }
 
-export async function loadAIConfig(): Promise<AIConfig> {
+export async function loadAIConfig(token?: string): Promise<AIConfig> {
   try {
     let raw: string;
     if (isVercelProd()) {
-      raw = await githubRead(GH_CONFIG_PATH);
+      // 토큰을 전달해 프라이빗 레포에서도 읽을 수 있게 하고,
+      // 토큰 없이 읽으면 빈 config가 반환돼 기존 키가 덮어쓰이는 버그 방지
+      raw = await githubRead(GH_CONFIG_PATH, token);
     } else {
       raw = await fs.readFile(CONFIG_PATH, "utf-8");
     }

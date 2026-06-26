@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadAIConfig, type Provider, type ProviderKey } from "@/lib/aiConfig";
 import { resolveProvider, resolveActiveProvider } from "@/lib/resolveProvider";
+import { resolveGithubToken } from "@/lib/resolveToken";
 
 async function callAI(
   provider: ProviderKey,
@@ -149,9 +150,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ drafts: mockDrafts(topic.trim()) });
     }
 
-    // 쿠키/환경변수 우선 → 없으면 GitHub 설정 파일 폴백
+    // 쿠키/환경변수 우선 → 없으면 GitHub 설정 파일 폴백 (GH 토큰 사용)
     const pc = resolveProvider(req, provider as ProviderKey)
-      ?? await loadAIConfig().then(c => c.providers[provider as ProviderKey]).catch(() => null);
+      ?? await loadAIConfig(resolveGithubToken(req)).then(c => c.providers[provider as ProviderKey]).catch(() => null);
 
     if (!pc?.apiKey) {
       return NextResponse.json(

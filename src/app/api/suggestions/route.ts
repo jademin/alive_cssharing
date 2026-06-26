@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveProvider, resolveActiveProvider } from "@/lib/resolveProvider";
 import { loadAIConfig, type ProviderKey } from "@/lib/aiConfig";
+import { resolveGithubToken } from "@/lib/resolveToken";
 
 const MOCK_SUGGESTIONS = [
   "비용 절감 효과 비교",
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
 
     const pc =
       resolveProvider(req, provider as ProviderKey) ??
-      (await loadAIConfig()
+      (await loadAIConfig(resolveGithubToken(req))
         .then((c) => c.providers[provider as ProviderKey])
         .catch(() => null));
 

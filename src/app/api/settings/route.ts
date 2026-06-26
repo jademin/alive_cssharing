@@ -14,8 +14,9 @@ function maskKey(key: string): string {
 
 /** GET — 현재 설정 반환 (쿠키/환경변수 우선, GitHub 폴백) */
 export async function GET(req: NextRequest) {
-  // GitHub 설정을 폴백으로 읽기
-  const ghConfig = await loadAIConfig().catch(() => null);
+  // GH 토큰을 사용해 프라이빗 레포에서도 설정 읽기
+  const ghToken = resolveGithubToken(req);
+  const ghConfig = await loadAIConfig(ghToken).catch(() => null);
 
   const getInfo = (p: ProviderKey) => {
     // 1순위: 쿠키 / 환경변수
@@ -85,7 +86,7 @@ export async function PUT(req: NextRequest) {
     try {
       const token = resolveGithubToken(req);
       if (token && p) {
-        const current = await loadAIConfig();
+        const current = await loadAIConfig(token);
         const updated: AIConfig = {
           activeProvider: (body.activeProvider ?? current.activeProvider) as AIConfig["activeProvider"],
           providers: {
@@ -136,7 +137,7 @@ export async function DELETE(req: NextRequest) {
     try {
       const token = resolveGithubToken(req);
       if (token && p) {
-        const current = await loadAIConfig();
+        const current = await loadAIConfig(token);
         const updated: AIConfig = {
           activeProvider: current.activeProvider === p ? "mock" : current.activeProvider,
           providers: {
