@@ -186,21 +186,27 @@ async function generateContent(
   topic: string,
   draft: string,
   systemPrompt: string,
-  providerOverride?: string
+  providerOverride?: string,
+  suggestions?: string[]
 ): Promise<string> {
   const provider = (providerOverride ?? resolveActiveProvider(req)) as Provider;
+
+  const suggestionContext =
+    suggestions && suggestions.length > 0
+      ? `\n\n[참고 키워드 및 방향]\n${suggestions.map((s) => `- ${s}`).join("\n")}`
+      : "";
 
   const userMessage = draft
     ? `위에 제공된 가이드 문서를 반드시 참고하여, 아래 작성자 초안을 바탕으로 ${channel} 채널에 맞는 완성된 콘텐츠를 작성해주세요. 가이드의 형식, 어조, 구조를 철저히 준수하세요.
 
 [주제]
-${topic}
+${topic}${suggestionContext}
 
 [작성자 초안]
 ${draft}
 
 위 초안의 핵심 메시지와 방향성을 유지하면서, 채널 가이드에 맞게 완성해주세요.`
-    : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}`;
+    : `위에 제공된 가이드 문서를 반드시 참고하여, 아래 주제로 ${channel} 채널에 맞는 콘텐츠를 작성해주세요. 가이드의 형식과 규칙을 철저히 준수하세요.\n\n[주제]\n${topic}${suggestionContext}`;
 
   if (provider !== "mock") {
     // 쿠키/환경변수 우선 → 없으면 GitHub 설정 파일 폴백
@@ -222,11 +228,18 @@ ${draft}
 // ─── POST /api/generate ───────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const { topic, draft = "", channels: requestedChannels, provider: providerOverride } = await req.json() as {
+    const {
+      topic,
+      draft = "",
+      channels: requestedChannels,
+      provider: providerOverride,
+      suggestions,
+    } = (await req.json()) as {
       topic: string;
       draft?: string;
       channels?: string[];
       provider?: string;
+      suggestions?: string[];
     };
 
     if (!topic?.trim()) {
@@ -248,7 +261,7 @@ export async function POST(req: NextRequest) {
         if (!systemPrompt) {
           console.warn(`[generate] ${channel}: 가이드 시스템 프롬프트가 비어 있습니다. 가이드 관리에서 파일을 활성화했는지 확인하세요.`);
         }
-        const content = await generateContent(req, channel, topic.trim(), draft, systemPrompt, providerOverride);
+        const content = await generateContent(req, channel, topic.trim(), draft, systemPrompt, providerOverride, suggestions);
         return { channel, content };
       })
     );
