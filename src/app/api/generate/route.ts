@@ -301,37 +301,26 @@ async function runAgentPipeline(
 ): Promise<string> {
   const provider = (providerOverride ?? resolveActiveProvider(req)) as Provider;
 
-  // 필요한 파일 목록 (agent + guide)
-  const needed = [
-    "agents/researcher.md",
-    "agents/writer.md",
-    "agents/image-maker.md",
-    "agents/assembler.md",
-    "guide/01-writing-guide.md",
-    "guide/02-examples.md",
-    "guide/03-quality-check.md",
-    "guide/04-image-guide.md",
-    "guide/06-brand-cta-reference.md",
-    "guide/07-recatch-style.md",
-    "guide/08-naver-seo.md",
-  ];
-
-  // 존재하는 파일만 병렬 로드 (가이드 관리에서 최신 버전 사용)
+  // 채널 디렉토리의 모든 파일을 동적으로 로드 (가이드 관리에서 추가/수정된 파일 포함)
   const allFiles = await collectGuideFiles(channel, token);
   const fileContents: Record<string, string> = {};
   await Promise.all(
-    needed
-      .filter(k => allFiles.includes(k))
-      .map(async k => {
-        try {
-          fileContents[k] = await readChannelFile(channel, k, token);
-        } catch {
-          console.warn(`[pipeline] ${channel}/${k} 로드 실패`);
-        }
-      })
+    allFiles.map(async k => {
+      try {
+        fileContents[k] = await readChannelFile(channel, k, token);
+      } catch {
+        console.warn(`[pipeline] ${channel}/${k} 로드 실패`);
+      }
+    })
   );
 
-  console.log(`[pipeline] ${channel}: 파일 ${Object.keys(fileContents).length}개 로드`);
+  // guide/ 디렉토리의 파일만 따로 모아 각 단계에 주입
+  const guideKeys = allFiles.filter(k => k.startsWith("guide/") && fileContents[k]);
+
+  console.log(`[pipeline] ${channel}: 전체 ${Object.keys(fileContents).length}개 로드 (guide ${guideKeys.length}개)`);
+  if (guideKeys.length === 0) {
+    console.warn(`[pipeline] ${channel}: 가이드 파일이 없습니다. 가이드 관리에서 파일을 추가해주세요.`);
+  }
 
   // Mock 모드
   if (provider === "mock") {
@@ -369,12 +358,11 @@ async function runAgentPipeline(
   };
 
   // ── Step 1: Research ──────────────────────────────────────
-  // researcher.md 지침 + guide/06(서비스 카탈로그) + guide/08(SEO 키워드)
+  // researcher.md 지침 + 브랜드/SEO 관련 가이드 (guide/ 전체)
   const researchSystem =
     WEB_PIPELINE_NOTE +
     (fileContents["agents/researcher.md"] ?? "") +
-    sec("guide/06-brand-cta-reference.md") +
-    sec("guide/08-naver-seo.md");
+    guideKeys.map(k => sec(k)).join("");
 
   const researchUser =
     `주제: ${topic}` +
@@ -386,16 +374,11 @@ async function runAgentPipeline(
   console.log(`[pipeline] ${channel} Step 1: 리서치 완료 (${researchOutput.length}자)`);
 
   // ── Step 2: Write ─────────────────────────────────────────
-  // writer.md 지침 + guide/01,02,03,06,07,08 + 리서치 결과
+  // writer.md 지침 + guide/ 전체 (가이드 관리에서 추가된 파일 모두 포함)
   const writeSystem =
     WEB_PIPELINE_NOTE +
     (fileContents["agents/writer.md"] ?? "") +
-    sec("guide/01-writing-guide.md") +
-    sec("guide/02-examples.md") +
-    sec("guide/03-quality-check.md") +
-    sec("guide/06-brand-cta-reference.md") +
-    sec("guide/07-recatch-style.md") +
-    sec("guide/08-naver-seo.md");
+    guideKeys.map(k => sec(k)).join("");
 
   const writeUser =
     `[주제]\n${topic}\n\n` +
