@@ -283,11 +283,19 @@ ${draft}
   return mockGenerate(channel, topic, systemPrompt ? `[가이드 ${Math.round(systemPrompt.length / 100)}백자]` : "");
 }
 
+// ─── 코드 블록 제거 헬퍼 ─────────────────────────────────────
+// AI가 ```html ... ``` 또는 ~~~html ... ~~~ 로 감싸서 반환하는 경우 제거
+function stripCodeFence(text: string): string {
+  const s = text.trim();
+  const m = s.match(/^(?:```|~~~)[\w-]*\n?([\s\S]*?)\n?(?:```|~~~)\s*$/);
+  return m ? m[1].trim() : s;
+}
+
 // ─── 네이버 블로그 멀티에이전트 파이프라인 ───────────────────
-// blog/ 폴더의 researcher → writer → image-maker → assembler 흐름을 웹에서 재현
-const WEB_PIPELINE_NOTE = `[웹 파이프라인 환경]
-파일 저장/읽기 작업 없이 결과 텍스트를 직접 출력합니다.
-이전 단계 결과는 [이전 단계 출력] 섹션으로 제공됩니다.
+const WEB_PIPELINE_NOTE = `[웹 파이프라인 환경 — 절대 규칙]
+- 파일 저장/읽기/Python 코드 실행 불필요. 결과를 텍스트로 직접 출력한다.
+- 이전 단계 결과는 [이전 단계 출력] 섹션으로 제공된다.
+- 코드 블록(\`\`\`html, ~~~html 등)으로 감싸지 않는다.
 
 `;
 
@@ -358,106 +366,123 @@ async function runAgentPipeline(
   };
 
   // ── Step 1: Research ──────────────────────────────────────
-  // researcher.md 지침 + 브랜드/SEO 관련 가이드 (guide/ 전체)
   const researchSystem =
     WEB_PIPELINE_NOTE +
-    (fileContents["agents/researcher.md"] ?? "") +
+    (fileContents["agents/researcher.md"] ?? "당신은 리서처입니다. 주제를 조사하고 research.md 형식으로 출력하세요.") +
     guideKeys.map(k => sec(k)).join("");
 
   const researchUser =
     `주제: ${topic}` +
     (userDraft ? `\n참고 초안 방향:\n${userDraft}` : "") +
-    `\n\nresearch.md 형식으로 조사·분석 결과를 직접 출력하세요. 파일 저장 없이 텍스트로 출력합니다.`;
+    `\n\nresearch.md 형식으로 조사·분석 결과를 직접 출력하세요.`;
 
   console.log(`[pipeline] ${channel} Step 1: 리서치 시작`);
-  const researchOutput = await step(researchSystem, researchUser, 4096, provider === "gemini");
+  const researchOutput = stripCodeFence(await step(researchSystem, researchUser, 4096, provider === "gemini"));
   console.log(`[pipeline] ${channel} Step 1: 리서치 완료 (${researchOutput.length}자)`);
 
   // ── Step 2: Write ─────────────────────────────────────────
-  // writer.md 지침 + guide/ 전체 (가이드 관리에서 추가된 파일 모두 포함)
+  // 가이드 파일 전체 주입 + PUBLISH/NOTES 마커 형식 명시 강제
   const writeSystem =
     WEB_PIPELINE_NOTE +
-    (fileContents["agents/writer.md"] ?? "") +
+    (fileContents["agents/writer.md"] ?? "당신은 블로그 글쓰기 전문가입니다.") +
     guideKeys.map(k => sec(k)).join("");
 
   const writeUser =
     `[주제]\n${topic}\n\n` +
     `[이전 단계 출력 — research.md]\n${researchOutput}\n\n` +
-    `위 리서치 결과를 바탕으로 draft.md 형식(PUBLISH 블록 + NOTES 블록)으로 블로그 초안을 작성하세요. ` +
-    `파일 저장 없이 전체 내용을 직접 출력하세요.`;
+    `위 리서치 결과와 모든 가이드 규칙을 철저히 적용해 블로그 초안을 작성하세요.\n\n` +
+    `[출력 형식 — 반드시 준수]\n` +
+    `아래 마커로 시작하고 끝나야 합니다:\n\n` +
+    `<!-- PUBLISH:START -->\n` +
+    `[여기에 발행할 블로그 본문 전체. 제목(# 제목)으로 시작. 소제목은 이모지+단독행. 마크다운 ## 금지.]\n` +
+    `<!-- PUBLISH:END -->\n\n` +
+    `<!-- NOTES:START -->\n` +
+    `[편집 메모, 대체 제목 A/B/C안, 강조 지정 표, 하네스 검증 결과]\n` +
+    `<!-- NOTES:END -->\n\n` +
+    `가이드의 모든 규칙(분량 최소 2800자, 소제목 4~6개, CTA 포함, 해시태그 등)을 철저히 따르세요.`;
 
   console.log(`[pipeline] ${channel} Step 2: 글쓰기 시작`);
-  const draftOutput = await step(writeSystem, writeUser, 8000);
-  console.log(`[pipeline] ${channel} Step 2: 글쓰기 완료 (${draftOutput.length}자)`);
+  const draftRaw = stripCodeFence(await step(writeSystem, writeUser, 8000));
+  console.log(`[pipeline] ${channel} Step 2: 글쓰기 완료 (${draftRaw.length}자)`);
 
-  if (!draftOutput.trim()) throw new Error("[pipeline] 글쓰기 단계 결과가 비어 있습니다.");
+  if (!draftRaw.trim()) throw new Error("[pipeline] 글쓰기 단계 결과가 비어 있습니다.");
+
+  // PUBLISH 마커가 없으면 전체를 PUBLISH 블록으로 감싸서 다음 단계로 전달
+  const draftOutput = draftRaw.includes("<!-- PUBLISH:START -->")
+    ? draftRaw
+    : `<!-- PUBLISH:START -->\n${draftRaw}\n<!-- PUBLISH:END -->`;
 
   // ── Step 2.5: Image Making ────────────────────────────────
-  // image-maker.md 지침으로 [IMAGE: 설명] 마커를 HTML+CSS 카드로 치환
-  // Python/Playwright 없이 AI가 HTML+CSS를 직접 생성 → 브라우저에서 동일하게 렌더링
   const imageMarkers = [...draftOutput.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
   let finalDraft = draftOutput;
 
   if (imageMarkers.length > 0 && fileContents["agents/image-maker.md"]) {
     const imageMakerSystem =
-      `[웹 파이프라인 환경 — HTML+CSS 카드 직접 출력 모드]\n` +
-      `Playwright/PNG 렌더링 대신, 각 [IMAGE: ...] 마커를 04-image-guide.md의 브랜드 카드 HTML+CSS로 직접 교체합니다.\n` +
-      `브랜드 PNG 파일은 웹에서 직접 로드 불가이므로 캐릭터 자리는 스타일된 텍스트/이모지로 처리하세요.\n` +
-      `색상: 썸네일 배경 #18A0E8, 카드 강조 #1e90d6, 남색 #2c4a7c\n\n` +
       WEB_PIPELINE_NOTE +
+      `각 [IMAGE: ...] 마커를 브랜드 카드 HTML+CSS로 교체합니다. PNG 파일 불필요, HTML 직접 생성.\n` +
+      `색상: 썸네일 배경 #18A0E8, 카드 강조 #1e90d6, 남색 #2c4a7c\n\n` +
       (fileContents["agents/image-maker.md"] ?? "") +
       sec("guide/04-image-guide.md") +
-      sec("guide/01-writing-guide.md") +
       sec("guide/06-brand-cta-reference.md");
 
     const imageMakerUser =
       `[주제]\n${topic}\n\n` +
-      `아래 draft.md에서 [IMAGE: ...] 마커(${imageMarkers.length}개)를 04-image-guide.md의 브랜드 카드 HTML+CSS로 교체하세요.\n` +
-      `규칙:\n` +
-      `- 첫 번째 이미지 또는 "썸네일" 키워드: 720×720px 카드, 배경 #18A0E8(스카이블루), 제목·부제 흰색\n` +
-      `- 소제목 요약 카드(소제목마다 1장 필수): 800px, 브랜드 카드 템플릿\n` +
-      `- 나머지 이미지: 내용에 맞는 타입 선택(번호카드/비교표/배지카드 등)\n` +
-      `- 모든 카드 하단에 파란 CTA 버튼 + CS Sharing 워터마크 포함\n` +
-      `- PUBLISH/NOTES 블록 마커와 나머지 텍스트는 그대로 유지\n` +
-      `- 수정된 전체 draft.md를 출력하세요\n\n` +
+      `아래 draft.md에서 [IMAGE: ...] 마커(${imageMarkers.length}개)를 브랜드 카드 HTML+CSS로 교체하세요.\n` +
+      `- 첫 번째/썸네일: 720×720px, 배경 #18A0E8, 제목·부제 흰색\n` +
+      `- 소제목 요약 카드: 800px 브랜드 카드\n` +
+      `- 모든 카드 하단: 파란 CTA + CS Sharing 워터마크\n` +
+      `- PUBLISH/NOTES 마커와 나머지 텍스트는 그대로 유지\n` +
+      `- 수정된 전체 draft.md를 출력하세요 (코드 블록 금지)\n\n` +
       `[draft.md]\n${draftOutput}`;
 
-    console.log(`[pipeline] ${channel} Step 2.5: 이미지 제작 시작 (마커 ${imageMarkers.length}개)`);
-    const draftWithImages = await step(imageMakerSystem, imageMakerUser, 8000);
-
+    console.log(`[pipeline] ${channel} Step 2.5: 이미지 제작 시작`);
+    const draftWithImages = stripCodeFence(await step(imageMakerSystem, imageMakerUser, 8000));
     if (draftWithImages.trim()) {
       finalDraft = draftWithImages;
       console.log(`[pipeline] ${channel} Step 2.5: 이미지 제작 완료 (${finalDraft.length}자)`);
     } else {
       console.warn(`[pipeline] ${channel} Step 2.5: 결과 없음, 이전 draft 사용`);
     }
-  } else {
-    console.log(`[pipeline] ${channel} Step 2.5: 이미지 마커 없음 또는 image-maker.md 없음, 생략`);
   }
 
-  // ── Step 3: Assemble ──────────────────────────────────────
-  // assembler.md 지침 + guide/01(렌더링 규칙) + 이미지 카드 포함 draft 결과
+  // ── Step 3: Assemble → 완성된 standalone HTML 생성 ────────
+  // assembler.md는 파이썬/파일저장 기반이라 웹에서 혼동 유발 → 웹 전용 지침으로 대체
   const assembleSystem =
     WEB_PIPELINE_NOTE +
-    `NOTES 블록이 없어도 PUBLISH 블록만으로 HTML을 생성하세요.\n` +
-    `초안에 이미 HTML+CSS 이미지 카드(<figure>, <div> 등)가 포함된 경우 그대로 유지하세요.\n` +
-    `남아있는 [IMAGE: ...] 마커는 아래 placeholder로 처리하세요:\n` +
-    `<div style="background:#f0f4ff;border:1.5px dashed #2c4a7c;border-radius:10px;padding:28px;text-align:center;margin:24px 0;"><span style="color:#2c4a7c;font-size:14px;">📷 이미지 자리</span></div>\n\n` +
-    (fileContents["agents/assembler.md"] ?? "") +
+    `당신은 HTML 생성 전문가입니다. 블로그 초안을 완성된 standalone HTML로 변환합니다.\n\n` +
+    `[출력 규칙 — 절대 준수]\n` +
+    `1. <!DOCTYPE html>로 시작하는 완전한 HTML 문서를 출력한다\n` +
+    `2. \`\`\`html, ~~~html 등 코드 블록으로 절대 감싸지 않는다 — <!DOCTYPE html>부터 바로 시작\n` +
+    `3. <!-- PUBLISH:START -->~<!-- PUBLISH:END --> 사이 내용만 HTML로 변환 (NOTES 블록 제외)\n` +
+    `4. PUBLISH 마커가 없으면 전체 내용을 본문으로 처리\n` +
+    `5. 이미 삽입된 HTML 카드(<figure>, <div> 등)는 그대로 유지\n` +
+    `6. 남은 [IMAGE: ...] 마커는 아래 placeholder로 처리:\n` +
+    `   <div style="background:#f0f4ff;border:1.5px dashed #2c4a7c;border-radius:10px;padding:28px;text-align:center;margin:24px 0;"><span style="color:#2c4a7c;font-size:14px;">📷 이미지 자리</span></div>\n\n` +
+    `[HTML 스타일 규칙]\n` +
+    `body: { background:#f9f9f9; font-family:'Malgun Gothic','맑은 고딕',sans-serif; color:#333; line-height:1.8; }\n` +
+    `.container: { max-width:700px; margin:40px auto; background:#fff; padding:40px; border-radius:8px; box-shadow:0 4px 8px rgba(0,0,0,0.05); }\n` +
+    `h1: { font-size:28px; font-weight:bold; border-bottom:1px solid #eee; padding-bottom:16px; margin-bottom:24px; }\n` +
+    `h2(소제목): { font-size:20px; font-weight:bold; border-left:5px solid #2c4a7c; padding-left:14px; color:#111; margin:32px 0 12px; }\n` +
+    `p: { text-align:center; margin:12px 0; }\n` +
+    `강조 마커: {{hl:텍스트}}→<mark>텍스트</mark> / {{center:텍스트}}→<span style="display:block;text-align:center">텍스트</span>\n` +
+    `[RICH:PHONE]→전화번호 클릭 배너(tel:1522-5539) / [RICH:LINK:설명]→링크 카드\n` +
+    `#태그→<span style="background:#e8f0fe;color:#2c4a7c;padding:2px 8px;border-radius:12px;font-size:13px;">#태그</span>\n\n` +
     sec("guide/01-writing-guide.md");
 
   const assembleUser =
     `[주제]\n${topic}\n\n` +
-    `[이전 단계 출력 — draft.md (이미지 카드 포함)]\n${finalDraft}\n\n` +
-    `위 초안을 assembler.md 지침에 따라 완성된 HTML로 변환하세요. ` +
-    `초안 내 HTML 이미지 카드는 그대로 유지하고, PUBLISH 블록 전체를 HTML로 완성하여 출력하세요.`;
+    `[초안 (이미지 카드 포함)]\n${finalDraft}\n\n` +
+    `위 초안의 PUBLISH 블록을 완성된 standalone HTML로 변환하세요.\n` +
+    `반드시 <!DOCTYPE html>로 시작하는 순수 HTML을 출력하세요. 코드 블록(\`\`\`html) 금지.`;
 
   console.log(`[pipeline] ${channel} Step 3: 조립 시작`);
-  const finalHtml = await step(assembleSystem, assembleUser, 8000);
+  const finalHtmlRaw = await step(assembleSystem, assembleUser, 8000);
+  const finalHtml = stripCodeFence(finalHtmlRaw);
   console.log(`[pipeline] ${channel} Step 3: 조립 완료 (${finalHtml.length}자)`);
 
-  // 조립 결과가 비어 있으면 draft 반환 (graceful fallback)
-  return finalHtml.trim() || draftOutput;
+  // 유효한 HTML이 아니면 draft 그대로 반환
+  if (!finalHtml.trim() || !finalHtml.includes("<")) return draftOutput;
+  return finalHtml;
 }
 
 // ─── POST /api/generate ───────────────────────────────────────

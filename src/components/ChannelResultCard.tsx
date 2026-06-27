@@ -125,17 +125,40 @@ export default function ChannelResultCard({ channel, status, content }: Props) {
         )}
         {status === "done" && content && (
           <div className="fade-in">
-            <pre className="text-sm text-slate-700 whitespace-pre-wrap font-[inherit] leading-relaxed">
-              {expanded ? content : preview}
-            </pre>
-            {hasMore && (
-              <button
-                onClick={() => setExpanded(!expanded)}
-                className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800 cursor-pointer transition-colors duration-200"
-                aria-expanded={expanded}
-              >
-                {expanded ? "접기 ▲" : "전체 보기 ▼"}
-              </button>
+            {content.trimStart().startsWith("<!DOCTYPE") || content.trimStart().startsWith("<html") ? (
+              /* HTML 콘텐츠: iframe으로 렌더링 */
+              <div>
+                <iframe
+                  srcDoc={content}
+                  title={`${label} 미리보기`}
+                  className="w-full rounded-lg border border-slate-200"
+                  style={{ height: expanded ? "900px" : "420px", border: "none" }}
+                  sandbox="allow-same-origin"
+                />
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800 cursor-pointer transition-colors duration-200"
+                  aria-expanded={expanded}
+                >
+                  {expanded ? "미리보기 줄이기 ▲" : "미리보기 크게 보기 ▼"}
+                </button>
+              </div>
+            ) : (
+              /* 텍스트 콘텐츠: 기존 방식 */
+              <>
+                <pre className="text-sm text-slate-700 whitespace-pre-wrap font-[inherit] leading-relaxed">
+                  {expanded ? content : preview}
+                </pre>
+                {hasMore && (
+                  <button
+                    onClick={() => setExpanded(!expanded)}
+                    className="mt-3 text-xs font-medium text-blue-600 hover:text-blue-800 cursor-pointer transition-colors duration-200"
+                    aria-expanded={expanded}
+                  >
+                    {expanded ? "접기 ▲" : "전체 보기 ▼"}
+                  </button>
+                )}
+              </>
             )}
           </div>
         )}
