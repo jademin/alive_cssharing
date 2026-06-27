@@ -258,11 +258,12 @@ export async function collectGuideFiles(channel: ChannelKey, token?: string): Pr
   return files;
 }
 
-// 채널에 멀티에이전트 파이프라인이 있는지 확인 (agents/researcher.md 존재 여부)
+// 채널에 멀티에이전트 파이프라인이 있는지 확인
+// researcher-web.md(웹 전용) 또는 researcher.md(로컬용) 중 하나라도 있으면 true
 export async function hasAgentPipeline(channel: ChannelKey, token?: string): Promise<boolean> {
   try {
     const allFiles = await collectGuideFiles(channel, token);
-    return allFiles.includes("agents/researcher.md");
+    return allFiles.includes("agents/researcher-web.md") || allFiles.includes("agents/researcher.md");
   } catch {
     return false;
   }

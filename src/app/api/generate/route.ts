@@ -369,9 +369,16 @@ async function runAgentPipeline(
   };
 
   // ── Step 1: Research ──────────────────────────────────────
+  // researcher-web.md가 있으면 우선 사용 (웹 API 최적화 버전)
+  // 없으면 researcher.md 폴백 (로컬 Claude Code용이라 제한 있음)
+  const researcherInstructions =
+    fileContents["agents/researcher-web.md"] ??
+    fileContents["agents/researcher.md"] ??
+    "당신은 리서처입니다. 주제를 조사하고 research.md 형식으로 출력하세요.";
+
   const researchSystem =
     WEB_PIPELINE_NOTE +
-    (fileContents["agents/researcher.md"] ?? "당신은 리서처입니다. 주제를 조사하고 research.md 형식으로 출력하세요.") +
+    researcherInstructions +
     guideKeys.map(k => sec(k)).join("");
 
   const researchUser =
@@ -384,26 +391,33 @@ async function runAgentPipeline(
   console.log(`[pipeline] ${channel} Step 1: 리서치 완료 (${researchOutput.length}자)`);
 
   // ── Step 2: Write ─────────────────────────────────────────
-  // writer.md는 "읽을 파일 (하나라도 빠지면 작성하지 않는다)"라는 강력한 조건이 있음.
-  // 웹 환경에서 파일은 실제로 존재하지 않고 시스템 프롬프트에 텍스트로 제공되므로
-  // AI가 "파일 없음"으로 오해해 작성을 거부/축약하는 것을 방지하기 위해
-  // writer.md 앞에 명시적으로 "파일 제공 완료" 선언을 주입한다.
-  const writerFileList = guideKeys
-    .map((k, i) => `${i + 1}. ${k} → 아래 === 섹션에 전문 포함됨`)
-    .join("\n");
+  // writer-web.md가 있으면 우선 사용 (웹 API 최적화 버전 — 파일 경로 참조 없음)
+  // 없으면 writer.md에 "파일 제공 완료" 선언을 앞에 주입해서 폴백
+  const writerInstructions = fileContents["agents/writer-web.md"];
 
-  const writeFileReadyNote =
-    `[웹 파이프라인 — 파일 제공 완료. 지금 바로 작성 시작]\n` +
-    `writer.md의 '읽을 파일' 목록이 모두 이 시스템 프롬프트 안에 제공되어 있습니다:\n` +
-    writerFileList + "\n" +
-    `${guideKeys.length + 1}. output/[주제]/research.md → 사용자 메시지의 [이전 단계 출력 — research.md] 섹션\n\n` +
-    `→ 모든 파일이 제공되었습니다. '하나라도 빠지면 작성하지 않는다' 조건은 이미 충족됨.\n` +
-    `→ 각 가이드 파일의 분량 기준·구조·톤·금지어 규칙을 모두 적용해 지금 바로 전체 글을 작성하세요.\n\n`;
-
-  const writeSystem =
-    writeFileReadyNote +
-    (fileContents["agents/writer.md"] ?? "당신은 블로그 글쓰기 전문가입니다.") +
-    guideKeys.map(k => sec(k)).join("");
+  let writeSystem: string;
+  if (writerInstructions) {
+    // 웹 전용 버전: 깔끔하게 가이드 전문만 뒤에 붙임
+    writeSystem =
+      WEB_PIPELINE_NOTE +
+      writerInstructions +
+      guideKeys.map(k => sec(k)).join("");
+  } else {
+    // 폴백: 로컬용 writer.md에 파일 제공 완료 선언 주입
+    const writerFileList = guideKeys
+      .map((k, i) => `${i + 1}. ${k} → 아래 === 섹션에 전문 포함됨`)
+      .join("\n");
+    const writeFileReadyNote =
+      `[웹 파이프라인 — 파일 제공 완료. 지금 바로 작성 시작]\n` +
+      `writer.md의 '읽을 파일' 목록이 모두 이 시스템 프롬프트 안에 제공되어 있습니다:\n` +
+      writerFileList + "\n" +
+      `${guideKeys.length + 1}. output/[주제]/research.md → 사용자 메시지의 [이전 단계 출력] 섹션\n\n` +
+      `→ 모든 파일 제공 완료. '하나라도 빠지면 작성하지 않는다' 조건 충족됨. 지금 바로 전체 글 작성 시작.\n\n`;
+    writeSystem =
+      writeFileReadyNote +
+      (fileContents["agents/writer.md"] ?? "당신은 블로그 글쓰기 전문가입니다.") +
+      guideKeys.map(k => sec(k)).join("");
+  }
 
   const writeUser =
     `[주제]\n${topic}\n\n` +
