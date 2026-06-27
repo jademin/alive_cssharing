@@ -1,4 +1,5 @@
 import fs from "fs/promises";
+import type { Dirent } from "fs";
 import path from "path";
 import { type ChannelKey, CHANNELS } from "./channels";
 import { isVercelProd, githubWrite, githubDelete, githubRead, githubReadBase64, githubListDir } from "./githubStorage";
@@ -207,7 +208,7 @@ export async function collectGuideFiles(channel: ChannelKey, token?: string): Pr
   const root = path.join(CHANNEL_DIR, channel);
 
   async function walkLocal(dir: string, relBase: string, out: string[]) {
-    let entries: fs.Dirent[];
+    let entries: Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {
