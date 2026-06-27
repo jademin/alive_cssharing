@@ -1,8 +1,0 @@
-{
-  "id": "20260627043828-qtf7",
-  "topic": "cs아웃소싱",
-  "createdAt": "2026-06-27T04:38:28.880Z",
-  "channels": {
-    "naver-blog": "```html\n<!DOCTYPE html>\n<html lang=\"ko\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>CS 아웃소싱, 여전히 비용 절감만을 위한 선택이라 생각하시나요?</title>\n    <link href=\"https://fonts.googleapis.com/css2?family=Nanum+Pen+Script&display=swap\" rel=\"stylesheet\">\n    <style>\n        body {\n            background-color: #f9f9f9;\n            font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;\n            color: #333333;\n            line-height: 1.8;\n            margin: 0;\n            padding: 0;\n        }\n        .container {\n            max-width: 700px;\n            margin: 40px auto;\n            background-color: #ffffff;\n            padding: 40px;\n            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);\n            border-radius: 8px;\n        }\n        h1 {\n            font-size: 28px;\n            font-weight: bold;\n            border-bottom: 1px solid #eee"
-  }
-}
