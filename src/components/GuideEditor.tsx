@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Save, ArrowLeft, Eye, Edit3, CheckCircle, AlertCircle,
   Loader2, Trash2, FileText, ChevronRight, ChevronDown,
-  Upload, X, ToggleLeft, ToggleRight, Info, FolderPlus, Folder, FilePlus,
+  Upload, X, Info, FolderPlus, Folder, FilePlus,
 } from "lucide-react";
 import Link from "next/link";
 import { CHANNEL_LABELS, CHANNEL_COLORS, type ChannelKey } from "@/lib/channels";
@@ -86,10 +86,10 @@ function firstFile(nodes: FileNode[]): string | null {
 }
 
 // ─── 파일 트리 노드 ────────────────────────────────────────
-function TreeNode({ node, depth, dropOn, dragging, included, selected, onSelect, onToggle, onDelete, onPointerDown }: {
+function TreeNode({ node, depth, dropOn, dragging, selected, onSelect, onDelete, onPointerDown }: {
   node: FileNode; depth: number; dropOn: string | null; dragging: string | null;
-  included: string[]; selected: string | null;
-  onSelect(p: string): void; onToggle(p: string): void; onDelete(p: string, isDir?: boolean): void;
+  selected: string | null;
+  onSelect(p: string): void; onDelete(p: string, isDir?: boolean): void;
   onPointerDown(p: string, e: React.PointerEvent): void;
 }) {
   const [open, setOpen] = useState(true);
@@ -122,15 +122,14 @@ function TreeNode({ node, depth, dropOn, dragging, included, selected, onSelect,
         </div>
         {open && node.children?.map(child => (
           <TreeNode key={child.path} node={child} depth={depth + 1}
-            dropOn={dropOn} dragging={dragging} included={included} selected={selected}
-            onSelect={onSelect} onToggle={onToggle} onDelete={onDelete} onPointerDown={onPointerDown} />
+            dropOn={dropOn} dragging={dragging} selected={selected}
+            onSelect={onSelect} onDelete={onDelete} onPointerDown={onPointerDown} />
         ))}
       </div>
     );
   }
 
   const isSel = selected === node.path;
-  const isInc = included.includes(node.path);
   return (
     <div
       className={`group flex items-center gap-1 rounded-lg mx-1 transition-colors select-none ${isDragging ? "opacity-30" : isSel ? "bg-blue-50 text-blue-700" : "text-slate-700 hover:bg-slate-100"}`}
@@ -141,11 +140,6 @@ function TreeNode({ node, depth, dropOn, dragging, included, selected, onSelect,
       <FileText className="w-3 h-3 shrink-0 text-slate-400 pointer-events-none" />
       <button className="flex-1 py-1.5 text-left text-xs truncate cursor-pointer" onClick={() => onSelect(node.path)}>
         {node.name}
-      </button>
-      <button onClick={e => { e.stopPropagation(); onToggle(node.path); }}
-        title={isInc ? "AI에서 제외" : "AI에 포함"}
-        className={`opacity-0 group-hover:opacity-100 p-0.5 shrink-0 cursor-pointer transition-opacity ${isInc ? "text-emerald-500" : "text-slate-300"}`}>
-        {isInc ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
       </button>
       <button onClick={e => { e.stopPropagation(); onDelete(node.path); }}
         className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 cursor-pointer transition-opacity shrink-0" title="파일 삭제">
@@ -440,15 +434,6 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
     } catch { setSaveStatus("err"); } finally { setSaving(false); }
   };
 
-  // ─── 토글 ────────────────────────────────────────────────
-  const handleToggle = async (fp: string) => {
-    if (!meta) return;
-    const inc = meta.include.includes(fp) ? meta.include.filter(p => p !== fp) : [...meta.include, fp];
-    setMeta({ ...meta, include: inc });
-    await fetch(`/api/channels/${channel}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ include: inc }) }).catch(() => {});
-    void reload();
-  };
-
   // ─── 삭제 ────────────────────────────────────────────────
   const handleDelete = async (fp: string, isDir = false) => {
     if (!confirm(`"${fp}"${isDir ? " 폴더와 그 안의 모든 파일" : " 파일"}을 삭제하시겠습니까?`)) return;
@@ -655,7 +640,14 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
         {/* 사이드바 */}
         <aside className="w-60 shrink-0 glass-card rounded-2xl overflow-hidden flex flex-col">
           <div className="px-3 pt-3 pb-2 border-b border-slate-100">
-            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">파일 목록</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">파일 목록</p>
+              {tree.length > 0 && (
+                <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-full px-1.5 py-0.5 font-medium">
+                  {tree.reduce(function count(s: number, n: FileNode): number { return n.type === "file" ? s + 1 : (n.children ?? []).reduce(count, s); }, 0)}개 적용 중
+                </span>
+              )}
+            </div>
             <div className="flex gap-1.5">
               <button onClick={() => setShowAdd(true)} className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 cursor-pointer">
                 <FilePlus className="w-3.5 h-3.5" />파일 추가
@@ -704,8 +696,8 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
               <>
                 {tree.map(n => (
                   <TreeNode key={n.path} node={n} depth={0}
-                    dropOn={dropOn} dragging={dragging} included={meta?.include ?? []} selected={selected}
-                    onSelect={setSelected} onToggle={handleToggle} onDelete={handleDelete}
+                    dropOn={dropOn} dragging={dragging} selected={selected}
+                    onSelect={setSelected} onDelete={handleDelete}
                     onPointerDown={startDrag} />
                 ))}
                 {dropOn === "" && dragging && (
@@ -717,9 +709,17 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
             )}
           </div>
 
-          <div className="px-3 py-2 border-t border-slate-100 flex items-start gap-1.5">
-            <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
-            <p className="text-[10px] text-slate-400 leading-tight">파일을 길게 눌러 드래그 · 호버 시 삭제 버튼 표시</p>
+          <div className="px-3 py-2 border-t border-slate-100 space-y-1.5">
+            <div className="flex items-start gap-1.5">
+              <CheckCircle className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-emerald-600 leading-tight font-medium">
+                저장 즉시 AI 생성에 반영됩니다
+              </p>
+            </div>
+            <div className="flex items-start gap-1.5">
+              <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-slate-400 leading-tight">파일을 길게 눌러 드래그 · 호버 시 삭제 버튼</p>
+            </div>
           </div>
         </aside>
 
