@@ -325,7 +325,10 @@ async function runAgentPipeline(
   // guide/ 디렉토리의 파일만 따로 모아 각 단계에 주입
   const guideKeys = allFiles.filter(k => k.startsWith("guide/") && fileContents[k]);
 
-  console.log(`[pipeline] ${channel}: 전체 ${Object.keys(fileContents).length}개 로드 (guide ${guideKeys.length}개)`);
+  const loadedKeys = Object.keys(fileContents);
+  const totalBytes = loadedKeys.reduce((s, k) => s + (fileContents[k]?.length ?? 0), 0);
+  console.log(`[pipeline] ${channel}: 전체 ${loadedKeys.length}개 로드 (guide ${guideKeys.length}개, 총 ${totalBytes}바이트)`);
+  console.log(`[pipeline] 로드된 파일: ${loadedKeys.join(", ")}`);
   if (guideKeys.length === 0) {
     console.warn(`[pipeline] ${channel}: 가이드 파일이 없습니다. 가이드 관리에서 파일을 추가해주세요.`);
   }
@@ -381,25 +384,39 @@ async function runAgentPipeline(
   console.log(`[pipeline] ${channel} Step 1: 리서치 완료 (${researchOutput.length}자)`);
 
   // ── Step 2: Write ─────────────────────────────────────────
-  // 가이드 파일 전체 주입 + PUBLISH/NOTES 마커 형식 명시 강제
+  // writer.md는 "읽을 파일 (하나라도 빠지면 작성하지 않는다)"라는 강력한 조건이 있음.
+  // 웹 환경에서 파일은 실제로 존재하지 않고 시스템 프롬프트에 텍스트로 제공되므로
+  // AI가 "파일 없음"으로 오해해 작성을 거부/축약하는 것을 방지하기 위해
+  // writer.md 앞에 명시적으로 "파일 제공 완료" 선언을 주입한다.
+  const writerFileList = guideKeys
+    .map((k, i) => `${i + 1}. ${k} → 아래 === 섹션에 전문 포함됨`)
+    .join("\n");
+
+  const writeFileReadyNote =
+    `[웹 파이프라인 — 파일 제공 완료. 지금 바로 작성 시작]\n` +
+    `writer.md의 '읽을 파일' 목록이 모두 이 시스템 프롬프트 안에 제공되어 있습니다:\n` +
+    writerFileList + "\n" +
+    `${guideKeys.length + 1}. output/[주제]/research.md → 사용자 메시지의 [이전 단계 출력 — research.md] 섹션\n\n` +
+    `→ 모든 파일이 제공되었습니다. '하나라도 빠지면 작성하지 않는다' 조건은 이미 충족됨.\n` +
+    `→ 각 가이드 파일의 분량 기준·구조·톤·금지어 규칙을 모두 적용해 지금 바로 전체 글을 작성하세요.\n\n`;
+
   const writeSystem =
-    WEB_PIPELINE_NOTE +
+    writeFileReadyNote +
     (fileContents["agents/writer.md"] ?? "당신은 블로그 글쓰기 전문가입니다.") +
     guideKeys.map(k => sec(k)).join("");
 
   const writeUser =
     `[주제]\n${topic}\n\n` +
     `[이전 단계 출력 — research.md]\n${researchOutput}\n\n` +
-    `위 리서치 결과와 모든 가이드 규칙을 철저히 적용해 블로그 초안을 작성하세요.\n\n` +
+    `위 리서치 결과와 시스템 프롬프트의 모든 가이드 파일 규칙을 철저히 적용해 블로그 초안을 작성하세요.\n` +
+    `(분량·구조·톤·이모지·CTA·해시태그 등 모든 기준은 가이드 파일에 명시되어 있습니다)\n\n` +
     `[출력 형식 — 반드시 준수]\n` +
-    `아래 마커로 시작하고 끝나야 합니다:\n\n` +
     `<!-- PUBLISH:START -->\n` +
-    `[여기에 발행할 블로그 본문 전체. 제목(# 제목)으로 시작. 소제목은 이모지+단독행. 마크다운 ## 금지.]\n` +
+    `[여기에 발행할 블로그 본문 전체. 제목으로 시작. 소제목은 이모지+단독행.]\n` +
     `<!-- PUBLISH:END -->\n\n` +
     `<!-- NOTES:START -->\n` +
     `[편집 메모, 대체 제목 A/B/C안, 강조 지정 표, 하네스 검증 결과]\n` +
-    `<!-- NOTES:END -->\n\n` +
-    `가이드의 모든 규칙(분량 최소 2800자, 소제목 4~6개, CTA 포함, 해시태그 등)을 철저히 따르세요.`;
+    `<!-- NOTES:END -->`;
 
   console.log(`[pipeline] ${channel} Step 2: 글쓰기 시작`);
   const draftRaw = stripCodeFence(await step(writeSystem, writeUser, 8000));

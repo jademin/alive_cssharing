@@ -5,7 +5,9 @@
 
 const GITHUB_OWNER = process.env.GITHUB_OWNER ?? "jademin";
 const GITHUB_REPO = process.env.GITHUB_REPO ?? "alive_cssharing";
-const GITHUB_BRANCH = process.env.GITHUB_BRANCH ?? "main";
+// Vercel 프리뷰 배포 시 VERCEL_GIT_COMMIT_REF가 현재 브랜치명을 자동으로 갖고 있음
+// → 민석 브랜치 프리뷰는 민석 브랜치 파일을, main 프로덕션은 main 파일을 읽음
+const GITHUB_BRANCH = process.env.GITHUB_BRANCH ?? process.env.VERCEL_GIT_COMMIT_REF ?? "main";
 
 // Vercel 환경변수는 대소문자 구분 — 소문자로 저장된 경우도 인식
 const ENV_GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? process.env.github_token;
