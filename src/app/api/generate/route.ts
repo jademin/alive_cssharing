@@ -524,6 +524,132 @@ async function runAgentPipeline(
   return finalHtml;
 }
 
+// ─── 파이프라인 단계별 실행 (Vercel Hobby 10초 타임아웃 우회) ──
+// 클라이언트가 단계마다 별도 요청 → 각 단계가 독립적인 10초 타임아웃
+async function runAgentPipelineStep(
+  req: NextRequest,
+  channel: ChannelKey,
+  topic: string,
+  userDraft: string,
+  token: string | undefined,
+  pipelineStep: "research" | "write" | "assemble",
+  pipelineContext: string | undefined,
+  providerOverride?: string
+): Promise<string> {
+  const provider = (providerOverride ?? resolveActiveProvider(req)) as Provider;
+
+  if (provider === "mock") {
+    if (pipelineStep === "research") return `[Mock 리서치: ${topic}]`;
+    if (pipelineStep === "write") return `<!-- PUBLISH:START -->\n# ${topic}\nMock 블로그 초안\n<!-- PUBLISH:END -->\n<!-- NOTES:START -->\nMock\n<!-- NOTES:END -->`;
+    return `<!DOCTYPE html><html><body><h1>${topic}</h1><p>Mock 블로그</p></body></html>`;
+  }
+
+  const pc = resolveProvider(req, provider as ProviderKey)
+    ?? await loadAIConfig(token).then(c => c.providers[provider as ProviderKey]).catch(() => null);
+  if (!pc?.apiKey) throw new Error(`${provider} API 키가 설정되지 않았습니다.`);
+
+  const allFiles = await collectGuideFiles(channel, token);
+  const fileContents: Record<string, string> = {};
+  await Promise.all(allFiles.map(async k => {
+    try { fileContents[k] = await readChannelFile(channel, k, token); }
+    catch { console.warn(`[step:${pipelineStep}] ${channel}/${k} 로드 실패`); }
+  }));
+
+  const guideKeys = allFiles.filter(k => !k.startsWith("agents/") && fileContents[k]);
+  const sec = (key: string) => fileContents[key]
+    ? `\n\n${"=".repeat(60)}\n# ${key}\n${"=".repeat(60)}\n\n${fileContents[key]}`
+    : "";
+
+  const call = async (system: string, user: string, maxTokens: number, useSearch = false): Promise<string> => {
+    if (provider === "gemini") return useSearch
+      ? callGeminiWithSearch(pc.apiKey, pc.model, system, user)
+      : callGemini(pc.apiKey, pc.model, system, user, maxTokens);
+    if (provider === "claude") return callClaude(pc.apiKey, pc.model, system, user, maxTokens);
+    if (provider === "openai") return callOpenAI(pc.apiKey, pc.model, system, user);
+    return "";
+  };
+
+  if (pipelineStep === "research") {
+    const instructions =
+      fileContents["agents/researcher-web.md"] ??
+      fileContents["agents/researcher.md"] ??
+      "당신은 리서처입니다. 주제를 조사하고 research.md 형식으로 출력하세요.";
+    const system = WEB_PIPELINE_NOTE + instructions + guideKeys.map(k => sec(k)).join("");
+    const user =
+      `주제: ${topic}` +
+      (userDraft ? `\n참고 초안 방향:\n${userDraft}` : "") +
+      `\n\nresearch.md 형식으로 조사·분석 결과를 직접 출력하세요.`;
+    console.log(`[step:research] ${channel} 시작`);
+    return stripCodeFence(await call(system, user, 2048, provider === "gemini"));
+  }
+
+  if (pipelineStep === "write") {
+    const researchOutput = pipelineContext ?? "";
+    const writerInstructions = fileContents["agents/writer-web.md"];
+    let writeSystem: string;
+    if (writerInstructions) {
+      writeSystem = WEB_PIPELINE_NOTE + writerInstructions + guideKeys.map(k => sec(k)).join("");
+    } else {
+      const writerFileList = guideKeys.map((k, i) => `${i + 1}. ${k} → 아래 === 섹션에 전문 포함됨`).join("\n");
+      writeSystem =
+        `[웹 파이프라인 — 파일 제공 완료. 지금 바로 작성 시작]\n` +
+        writerFileList + `\n\n` +
+        (fileContents["agents/writer.md"] ?? "당신은 블로그 글쓰기 전문가입니다.") +
+        guideKeys.map(k => sec(k)).join("");
+    }
+    const writeUser =
+      `[주제]\n${topic}\n\n` +
+      `[리서치 결과]\n${researchOutput}\n\n` +
+      `가이드 파일 규칙을 철저히 적용해 블로그 초안을 작성하세요.\n\n` +
+      `[출력 형식 — 반드시 준수]\n` +
+      `<!-- PUBLISH:START -->\n[블로그 본문 전체]\n<!-- PUBLISH:END -->\n\n` +
+      `<!-- NOTES:START -->\n[편집 메모]\n<!-- NOTES:END -->`;
+
+    console.log(`[step:write] ${channel} 시작`);
+    const draftRaw = stripCodeFence(await call(writeSystem, writeUser, 3000));
+    if (!draftRaw.trim()) throw new Error("[pipeline:write] 글쓰기 결과가 비어 있습니다.");
+
+    let draftOutput = draftRaw.includes("<!-- PUBLISH:START -->")
+      ? draftRaw
+      : `<!-- PUBLISH:START -->\n${draftRaw}\n<!-- PUBLISH:END -->`;
+    if (!draftOutput.includes("<!-- PUBLISH:END -->")) draftOutput += "\n<!-- PUBLISH:END -->";
+    return draftOutput;
+  }
+
+  if (pipelineStep === "assemble") {
+    const finalDraft = pipelineContext ?? "";
+    const assemblerInstructions = fileContents["agents/assembler-web.md"];
+    const assembleSystemBase = assemblerInstructions
+      ? WEB_PIPELINE_NOTE + assemblerInstructions
+      : WEB_PIPELINE_NOTE +
+        `당신은 HTML 생성 전문가입니다. 블로그 초안을 완성된 standalone HTML로 변환합니다.\n\n` +
+        `[출력 규칙]\n` +
+        `1. <!DOCTYPE html>로 시작하는 완전한 HTML 문서를 출력한다\n` +
+        `2. 코드 블록(\`\`\`html 등)으로 감싸지 않는다\n` +
+        `3. <!-- PUBLISH:START -->~<!-- PUBLISH:END --> 사이 내용만 변환 (NOTES 제외)\n` +
+        `4. PUBLISH 마커 없으면 전체를 본문으로 처리\n` +
+        `5. 기존 HTML 카드(<figure>, <div>)는 그대로 유지\n` +
+        `6. [IMAGE: ...] 마커 → <div style="background:#f0f4ff;border:1.5px dashed #2c4a7c;border-radius:10px;padding:28px;text-align:center;margin:24px 0;"><span style="color:#2c4a7c;font-size:14px;">📷 이미지 자리</span></div>\n\n` +
+        `[스타일] body:{background:#f9f9f9;font-family:'Malgun Gothic',sans-serif;color:#333;line-height:1.8;} ` +
+        `.container:{max-width:700px;margin:40px auto;background:#fff;padding:40px;border-radius:8px;box-shadow:0 4px 8px rgba(0,0,0,0.05);} ` +
+        `h1:{font-size:28px;font-weight:bold;border-bottom:1px solid #eee;padding-bottom:16px;margin-bottom:24px;} ` +
+        `h2:{font-size:20px;font-weight:bold;border-left:5px solid #2c4a7c;padding-left:14px;color:#111;margin:32px 0 12px;}`;
+
+    const assembleSystem = assembleSystemBase + sec("guide/01-writing-guide.md");
+    const assembleUser =
+      `[주제]\n${topic}\n\n[초안]\n${finalDraft}\n\n` +
+      `PUBLISH 블록을 완성된 standalone HTML로 변환하세요. 반드시 <!DOCTYPE html>로 시작하는 순수 HTML을 출력하세요. 코드 블록 금지.`;
+
+    console.log(`[step:assemble] ${channel} 시작`);
+    const finalHtmlRaw = await call(assembleSystem, assembleUser, 3000);
+    const finalHtml = stripCodeFence(finalHtmlRaw);
+    if (!finalHtml.trim() || !finalHtml.includes("<")) return finalDraft;
+    return finalHtml;
+  }
+
+  throw new Error(`알 수 없는 파이프라인 단계: ${pipelineStep}`);
+}
+
 // ─── POST /api/generate ───────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
@@ -533,12 +659,16 @@ export async function POST(req: NextRequest) {
       channels: requestedChannels,
       provider: providerOverride,
       suggestions,
+      pipelineStep,
+      pipelineContext,
     } = (await req.json()) as {
       topic: string;
       draft?: string;
       channels?: string[];
       provider?: string;
       suggestions?: string[];
+      pipelineStep?: "research" | "write" | "assemble";
+      pipelineContext?: string;
     };
 
     if (!topic?.trim()) {
@@ -554,6 +684,16 @@ export async function POST(req: NextRequest) {
     }
 
     const token = resolveGithubToken(req);
+
+    // 단계별 파이프라인 모드 (Vercel Hobby 타임아웃 우회 — 클라이언트가 단계마다 별도 호출)
+    if (pipelineStep) {
+      const channel = targetChannels[0];
+      if (!channel) return NextResponse.json({ error: "채널을 지정해주세요." }, { status: 400 });
+      const output = await runAgentPipelineStep(
+        req, channel, topic.trim(), draft, token, pipelineStep, pipelineContext, providerOverride
+      );
+      return NextResponse.json({ step: pipelineStep, output });
+    }
 
     const results = await Promise.all(
       targetChannels.map(async (channel) => {

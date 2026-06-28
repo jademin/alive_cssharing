@@ -25,7 +25,11 @@ type Phase = "input" | "drafts" | "channels";
 type ChannelStatus = "idle" | "loading" | "done" | "error";
 
 interface DraftItem { angle: string; title: string; body: string; }
-interface ChannelResult { status: ChannelStatus; content?: string; }
+interface ChannelResult { status: ChannelStatus; content?: string; pipelineStage?: string; }
+
+// 멀티에이전트 파이프라인을 사용하는 채널 목록
+// 각 단계를 별도 API 호출로 분리해 Vercel 10초 타임아웃을 우회
+const PIPELINE_CHANNELS = new Set<ChannelKey>(["naver-blog"]);
 
 // ── 예시 주제 ────────────────────────────────────────────────
 const EXAMPLE_TOPICS = [
@@ -290,15 +294,55 @@ export default function HomePage() {
     try {
       for (const { draftIndex, channels } of draftAssignments) {
         const draft = draftBodies[draftIndex] ?? drafts[draftIndex]?.body ?? "";
-        const res = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic: topic.trim(), draft, channels, provider: selectedProvider }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "생성 실패");
-        for (const { channel, content } of data.results) {
-          setResults(prev => ({ ...prev, [channel as ChannelKey]: { status: "done", content } }));
+
+        // 단순 채널과 파이프라인 채널 분리
+        const simpleChannels = channels.filter(c => !PIPELINE_CHANNELS.has(c));
+        const pipelineChannels = channels.filter(c => PIPELINE_CHANNELS.has(c));
+
+        // 단순 채널: 기존 방식 (단일 API 호출)
+        if (simpleChannels.length > 0) {
+          const res = await fetch("/api/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ topic: topic.trim(), draft, channels: simpleChannels, provider: selectedProvider }),
+          });
+          const data = await res.json() as { error?: string; results?: Array<{ channel: string; content: string }> };
+          if (!res.ok) throw new Error(data.error ?? "생성 실패");
+          for (const { channel, content } of data.results ?? []) {
+            setResults(prev => ({ ...prev, [channel as ChannelKey]: { status: "done", content } }));
+            channelsMap[channel] = content;
+          }
+        }
+
+        // 파이프라인 채널: Research → Write → Assemble 단계별 별도 호출
+        for (const channel of pipelineChannels) {
+          const callStep = async (step: string, context?: string): Promise<string> => {
+            const res = await fetch("/api/generate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                topic: topic.trim(), draft,
+                channels: [channel],
+                provider: selectedProvider,
+                pipelineStep: step,
+                pipelineContext: context,
+              }),
+            });
+            const data = await res.json() as { error?: string; output?: string };
+            if (!res.ok) throw new Error(data.error ?? `${step} 단계 실패`);
+            return data.output ?? "";
+          };
+
+          setResults(prev => ({ ...prev, [channel]: { status: "loading", pipelineStage: "리서치 중..." } }));
+          const researchOut = await callStep("research");
+
+          setResults(prev => ({ ...prev, [channel]: { status: "loading", pipelineStage: "작성 중..." } }));
+          const writeOut = await callStep("write", researchOut);
+
+          setResults(prev => ({ ...prev, [channel]: { status: "loading", pipelineStage: "HTML 변환 중..." } }));
+          const content = await callStep("assemble", writeOut);
+
+          setResults(prev => ({ ...prev, [channel]: { status: "done", content } }));
           channelsMap[channel] = content;
         }
       }
@@ -546,7 +590,7 @@ export default function HomePage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 {resultChannels.map(channel => (
                   <div key={channel} className={channel === "magazine" || resultChannels.length === 1 ? "lg:col-span-2" : ""}>
-                    <ChannelResultCard channel={channel} status={results[channel].status} content={results[channel].content} />
+                    <ChannelResultCard channel={channel} status={results[channel].status} content={results[channel].content} pipelineStage={results[channel].pipelineStage} />
                   </div>
                 ))}
               </div>

@@ -37,6 +37,7 @@ interface Props {
   channel: ChannelKey;
   status: Status;
   content?: string;
+  pipelineStage?: string;
 }
 
 function SkeletonBlock() {
@@ -49,7 +50,7 @@ function SkeletonBlock() {
   );
 }
 
-export default function ChannelResultCard({ channel, status, content }: Props) {
+export default function ChannelResultCard({ channel, status, content, pipelineStage }: Props) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { color, bgColor, borderColor } = CHANNEL_COLORS[channel];
@@ -82,7 +83,7 @@ export default function ChannelResultCard({ channel, status, content }: Props) {
           {status === "loading" && (
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
               <div className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" aria-hidden="true" />
-              생성 중
+              {pipelineStage ?? "생성 중"}
             </span>
           )}
           {status === "done" && (
