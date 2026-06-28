@@ -289,6 +289,12 @@ function ImportModal({ channel, folders, onDone, onClose }: {
           {entries.length > 0 && (
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">업로드 목록 ({entries.length}개)</label>
+              {entries.some(e => !isTextExt(e.name)) && (
+                <div className="flex items-start gap-1.5 px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>PDF, 이미지 등 <strong>비텍스트 파일</strong>은 저장은 되지만 AI 콘텐츠 생성 시 참조되지 않습니다. 가이드 내용은 <strong>.md 또는 .txt</strong>로 올려주세요.</span>
+                </div>
+              )}
               {entries.map((entry, i) => (
                 <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-sm ${
                   entry.status === "ok" ? "border-emerald-200 bg-emerald-50" :
@@ -310,6 +316,9 @@ function ImportModal({ channel, folders, onDone, onClose }: {
                       className="flex-1 bg-transparent border-none outline-none text-xs font-mono text-slate-700 disabled:text-slate-500 min-w-0"
                     />
                   </div>
+                  {!isTextExt(entry.name) && entry.status === "pending" && (
+                    <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full shrink-0">AI 미참조</span>
+                  )}
                   {entry.errMsg && <span className="text-xs text-red-600 shrink-0">{entry.errMsg}</span>}
                   {(entry.status === "pending" || entry.status === "err") && (
                     <button onClick={() => removeEntry(i)} className="p-0.5 text-slate-400 hover:text-red-500 cursor-pointer shrink-0"><X className="w-3.5 h-3.5" /></button>
@@ -713,8 +722,12 @@ export default function GuideEditor({ channel }: { channel: ChannelKey }) {
             <div className="flex items-start gap-1.5">
               <CheckCircle className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
               <p className="text-[10px] text-emerald-600 leading-tight font-medium">
-                저장 즉시 AI 생성에 반영됩니다
+                .md/.txt 파일은 저장 즉시 AI 생성에 반영됩니다
               </p>
+            </div>
+            <div className="flex items-start gap-1.5">
+              <Info className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-amber-600 leading-tight">PDF·이미지는 AI가 읽지 못합니다 — 가이드는 .md로 올리세요</p>
             </div>
             <div className="flex items-start gap-1.5">
               <Info className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />

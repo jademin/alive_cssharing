@@ -322,8 +322,8 @@ async function runAgentPipeline(
     })
   );
 
-  // guide/ 디렉토리의 파일만 따로 모아 각 단계에 주입
-  const guideKeys = allFiles.filter(k => k.startsWith("guide/") && fileContents[k]);
+  // agents/ 를 제외한 모든 파일을 가이드 컨텍스트로 주입 (guide/ 포함, 루트 업로드 파일 포함)
+  const guideKeys = allFiles.filter(k => !k.startsWith("agents/") && fileContents[k]);
 
   const loadedKeys = Object.keys(fileContents);
   const totalBytes = loadedKeys.reduce((s, k) => s + (fileContents[k]?.length ?? 0), 0);
