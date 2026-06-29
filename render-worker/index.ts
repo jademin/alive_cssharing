@@ -127,10 +127,15 @@ async function processNextTask() {
   }
 }
 
+// 채널당 하나씩 동시에 처리 (5채널 병렬)
+const MAX_CONCURRENT = 5;
+
 // 3초 주기로 새 작업을 폴링해서 처리하는 루프
 async function startLoop() {
   while (true) {
-    await processNextTask();
+    await Promise.all(
+      Array.from({ length: MAX_CONCURRENT }, () => processNextTask())
+    );
     await new Promise(resolve => setTimeout(resolve, 3000));
   }
 }
