@@ -137,6 +137,14 @@ function ChannelEditor({ resultId, channel, initialContent, onSaved }: {
             className="w-full p-4 text-sm text-slate-800 font-[inherit] leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 min-h-[200px]"
             autoFocus
           />
+        ) : text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html") ? (
+          <iframe
+            srcDoc={text}
+            title="미리보기"
+            className="w-full"
+            style={{ height: "500px", border: "none" }}
+            sandbox="allow-same-origin"
+          />
         ) : (
           <pre className="p-4 text-sm text-slate-700 whitespace-pre-wrap font-[inherit] leading-relaxed">{text}</pre>
         )}
