@@ -292,7 +292,7 @@ ${draft}
       throw new Error(`${provider} API 키가 설정되지 않았습니다. 설정 페이지에서 API 키를 입력하고 저장해주세요.`);
     }
 
-    const maxTok = channel === "instagram" ? 8000 : 4096;
+    const maxTok = channel === "instagram" ? 16000 : 4096;
     // instagram은 JSON 구조화 작업 → thinking 불필요, 끄면 훨씬 빠름
     const disableThinking = channel === "instagram";
     if (provider === "claude") return callClaude(pc.apiKey, pc.model, systemPrompt, userMessage, maxTok);

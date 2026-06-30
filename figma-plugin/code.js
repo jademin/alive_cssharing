@@ -1,4 +1,4 @@
-figma.showUI(__html__, { width: 440, height: 420 });
+figma.showUI(__html__, { width: 440, height: 480 });
 
 var STYLE = {
   numberFontSize: 40,
@@ -39,6 +39,37 @@ var TEXT_LIMITS = {
   keyBody: 34
 };
 
+var BOX_ACCENTS = [
+  { bar: "#00AEEF", bg: "#EBF8FF", title: "#006B8F" },
+  { bar: "#6366F1", bg: "#EEF2FF", title: "#4338CA" },
+  { bar: "#14B8A6", bg: "#F0FDFA", title: "#0D9488" },
+];
+
+var FIGMA_THEMES = {
+  default: { first: "Instagram post - first", cta: "Instagram post - CTA" },
+  summer:  { first: "summer_first",  cta: "summer_CTA"  },
+  summer1: { first: "summer1_first", cta: "summer1_CTA" },
+  summer2: { first: "summer2_first", cta: "summer2_CTA" },
+  summer3: { first: "summer3_first", cta: "summer3_CTA" },
+  summer4: { first: "summer4_first", cta: "summer4_CTA" },
+  summer5: { first: "summer5_first", cta: "summer5_CTA" },
+};
+
+function applyThemeToCards(cards, theme) {
+  var t = FIGMA_THEMES[theme] || FIGMA_THEMES["default"];
+  return cards.map(function(card) {
+    var name = card.template_name;
+    // 기존 summer 변형 이름(summer1_first 등)도 포함해서 교체
+    if (name === "Instagram post - first" || name.endsWith("_first")) {
+      return Object.assign({}, card, { template_name: t.first });
+    }
+    if (name === "Instagram post - CTA" || name.endsWith("_CTA")) {
+      return Object.assign({}, card, { template_name: t.cta });
+    }
+    return card;
+  });
+}
+
 figma.ui.onmessage = async function (msg) {
   if (msg.type !== "create-cards") return;
 
@@ -46,7 +77,35 @@ figma.ui.onmessage = async function (msg) {
     var parsed;
 
     try {
-      parsed = JSON.parse(msg.jsonText);
+      var rawText = msg.jsonText.trim();
+
+      // AI 서문 + 코드펜스 패턴 처리: "설명 텍스트\n\n```json\n{...}\n```"
+      var fenceMatch = rawText.match(/```(?:json)?\s*\n([\s\S]*?)\n\s*```/);
+      if (fenceMatch) {
+        rawText = fenceMatch[1].trim();
+      } else if (rawText.startsWith("```")) {
+        // 앞쪽 코드펜스만 있는 경우
+        var lines = rawText.split("\n");
+        var closeIdx = lines.findIndex(function(l, i) { return i > 0 && /^```/.test(l.trim()); });
+        rawText = (closeIdx > 0 ? lines.slice(1, closeIdx) : lines.slice(1)).join("\n").trim();
+      }
+
+      // 그래도 JSON이 아닌 경우 첫 { 또는 [ 위치부터 시도
+      if (!rawText.startsWith("{") && !rawText.startsWith("[")) {
+        var firstBrace = rawText.indexOf("{");
+        var firstBracket = rawText.indexOf("[");
+        var startPos = -1;
+        if (firstBrace !== -1 && firstBracket !== -1) {
+          startPos = Math.min(firstBrace, firstBracket);
+        } else if (firstBrace !== -1) {
+          startPos = firstBrace;
+        } else if (firstBracket !== -1) {
+          startPos = firstBracket;
+        }
+        if (startPos !== -1) rawText = rawText.slice(startPos);
+      }
+
+      parsed = JSON.parse(rawText);
     } catch (e) {
       throw new Error("JSON 형식이 올바르지 않습니다. 앱에서 생성된 JSON을 그대로 붙여넣어 주세요.");
     }
@@ -61,6 +120,9 @@ figma.ui.onmessage = async function (msg) {
     if (cards.length === 0) {
       throw new Error("cards가 0개입니다. 콘텐츠를 먼저 생성해 주세요.");
     }
+
+    // 항상 테마 치환 적용 (default도 처리, 기존 summer 이름도 교체 가능)
+    cards = applyThemeToCards(cards, msg.theme || "default");
 
     figma.ui.postMessage({
       type: "status",
@@ -98,51 +160,70 @@ figma.ui.onmessage = async function (msg) {
 
 async function createCards(cards) {
   var createdFrames = [];
-  var position = getNextStartPosition();
-  var x = position.x;
-  var y = position.y;
   var gap = 80;
   var batchKey = getDateTimeKey();
 
+  // "Instagram post - first" 템플릿이 있는 페이지를 자동으로 찾음 (어느 페이지에서 실행해도 동작)
+  var templatePage = figma.currentPage;
+  var outputPage = figma.currentPage;
+
+  for (var pi = 0; pi < figma.root.children.length; pi++) {
+    var p = figma.root.children[pi];
+    if (p.name === "결과물") {
+      outputPage = p;
+    }
+    // 템플릿 페이지: "Instagram post - first" FRAME이 있는 페이지
+    if (p.findOne(function(n) { return n.type === "FRAME" && n.name === "Instagram post - first"; })) {
+      templatePage = p;
+    }
+  }
+
+  // 결과물 페이지 기준 배치 위치 계산
+  var position = getPageStartPosition(outputPage);
+  var x = position.x;
+  var y = position.y;
+
   for (var i = 0; i < cards.length; i++) {
     var card = cards[i];
+    var cardTemplateName = card.template_name;
 
-    var template = figma.currentPage.findOne(function (node) {
-      return node.type === "FRAME" && node.name === card.template_name;
+    // summer1_first, summer1_CTA 등 여름 변형은 해당 프레임을 직접 클론
+    // Instagram post - first/CTA/middle은 그대로 클론
+    var template = templatePage.findOne(function (node) {
+      return node.type === "FRAME" && node.name === cardTemplateName;
     });
 
     if (!template) {
-      throw new Error("템플릿 프레임을 찾을 수 없습니다: " + card.template_name);
+      throw new Error("템플릿 프레임을 찾을 수 없습니다: " + cardTemplateName);
     }
 
     var clone = template.clone();
-    figma.currentPage.appendChild(clone);
-
-    clone.name = "card" + card.card_no + "_" + batchKey;
-    clone.x = x;
-    clone.y = y;
+    templatePage.appendChild(clone);
     clone.visible = true;
     clone.locked = false;
 
     await setLayerText(clone, "cloud_label", card.cloud_label || "");
     await setLayerText(clone, "series_title", card.series_title || "");
 
-    if (card.template_name === "Instagram post - first") {
-      await setTitleWithLineLimit(
-        clone,
-        "title",
-        card.title || "",
-        TEXT_LIMITS.coverTitleLine
-      );
+    if (card.template_name === "Instagram post - first" || cardTemplateName.endsWith("_first")) {
+      var rawCoverTitle = String(card.title || "").replace(/\r/g, "");
+      var coverTitle = rawCoverTitle.indexOf("\n") !== -1
+        ? rawCoverTitle
+        : wrapTitleByMaxChars(rawCoverTitle, TEXT_LIMITS.coverTitleLine);
+      await setLayerText(clone, "title", coverTitle);
 
       await setLayerText(clone, "subtitle", card.subtitle || "");
     }
 
     if (card.template_name === "Instagram post - middle") {
-      var middleTitle = wrapTitleByMaxChars(
-        card.title || "",
-        TEXT_LIMITS.middleTitleLine
-      );
+      var rawTitle = String(card.title || "").replace(/\r/g, "");
+      // AI가 생성한 줄을 하나로 합친 뒤 12자 단위로 재분할 → 최대 2줄 강제
+      var titleOneLine = rawTitle.split("\n")
+        .map(function(p) { return p.trim(); })
+        .filter(Boolean)
+        .join(" ");
+      var wrappedLines = wrapTitleByMaxChars(titleOneLine, 12).split("\n");
+      var middleTitle = wrappedLines.slice(0, 2).join("\n");
 
       var middleSubtitle = forceSingleLineText(card.subtitle || "");
       var middleHighlight = getMiddleHighlight(
@@ -153,14 +234,14 @@ async function createCards(cards) {
       if (middleHighlight) {
         await setStyledTitle(clone, "title", middleTitle, middleHighlight);
       } else {
-        await setTitleWithLineLimit(clone, "title", middleTitle, TEXT_LIMITS.middleTitleLine);
+        await setLayerText(clone, "title", middleTitle);
       }
 
       await setLayerText(clone, "subtitle", middleSubtitle);
     }
 
     // CTA 템플릿은 텍스트 레이어만 채우고 디자인은 유지
-    if (card.template_name === "Instagram post - CTA") {
+    if (card.template_name === "Instagram post - CTA" || cardTemplateName.endsWith("_CTA")) {
       if (card.cta) {
         await setLayerText(clone, "cta", card.cta);
       }
@@ -168,15 +249,27 @@ async function createCards(cards) {
 
     await renderDynamicBlocks(clone, card);
 
+    // 완성된 클론을 결과물 페이지로 이동 후 위치 지정
+    outputPage.appendChild(clone);
+    clone.name = "card" + card.card_no + "_" + batchKey;
+    clone.x = x;
+    clone.y = y;
+
     createdFrames.push(clone);
     x += clone.width + gap;
+  }
+
+  // 결과물 페이지로 전환
+  if (outputPage !== templatePage) {
+    await figma.setCurrentPageAsync(outputPage);
   }
 
   return createdFrames;
 }
 
-function getNextStartPosition() {
-  var frames = figma.currentPage.children.filter(function (node) {
+// 특정 페이지의 기존 프레임 아래쪽에 새 배치 위치 계산
+function getPageStartPosition(page) {
+  var frames = page.children.filter(function (node) {
     return node.type === "FRAME";
   });
 
@@ -189,7 +282,6 @@ function getNextStartPosition() {
 
   for (var i = 0; i < frames.length; i++) {
     var frame = frames[i];
-
     if (frame.x < minX) minX = frame.x;
     if (frame.y + frame.height > maxY) maxY = frame.y + frame.height;
   }
@@ -198,6 +290,29 @@ function getNextStartPosition() {
   if (maxY === -Infinity) maxY = 0;
 
   return { x: minX, y: maxY + 180 };
+}
+
+function getNextStartPosition() {
+  return getPageStartPosition(figma.currentPage);
+}
+
+// FRAME 또는 자식 레이어에서 IMAGE fill 반환 (summer 템플릿 사진 배경 추출용)
+function getImageFills(node) {
+  if (node.fills && node.fills.length > 0) {
+    var hasImage = node.fills.some(function(f) { return f.type === "IMAGE"; });
+    if (hasImage) return node.fills;
+  }
+  // FRAME에 직접 fill이 없으면 자식 레이어에서 검색
+  if (node.children) {
+    for (var i = 0; i < node.children.length; i++) {
+      var child = node.children[i];
+      if (child.fills && child.fills.length > 0) {
+        var childHasImage = child.fills.some(function(f) { return f.type === "IMAGE"; });
+        if (childHasImage) return child.fills;
+      }
+    }
+  }
+  return null;
 }
 
 function getDateTimeKey() {
@@ -263,7 +378,10 @@ async function setStyledTitle(parent, layerName, fullText, highlightText) {
 
   if (!highlightText) return;
 
-  var start = fullText.indexOf(highlightText);
+  // \n 정규화 후 위치 탐색 (줄바꿈이 하이라이트 중간에 있어도 같은 char offset이므로 그대로 사용 가능)
+  var flatFull = fullText.replace(/\n/g, " ");
+  var flatHL = String(highlightText).replace(/\n/g, " ");
+  var start = flatFull.indexOf(flatHL);
 
   if (start === -1) return;
 
@@ -277,8 +395,11 @@ async function setStyledTitle(parent, layerName, fullText, highlightText) {
 function getMiddleHighlight(fullText, highlightText) {
   var title = String(fullText || "");
   var highlight = String(highlightText || "").trim();
+  // \n을 공백으로 정규화해서 비교 (줄바꿈이 하이라이트 중간에 끼어도 매칭)
+  var flatTitle = title.replace(/\n/g, " ");
+  var flatHL = highlight.replace(/\n/g, " ");
 
-  if (highlight && title.indexOf(highlight) !== -1) {
+  if (flatHL && flatTitle.indexOf(flatHL) !== -1) {
     return highlight;
   }
 
@@ -352,7 +473,7 @@ async function renderDynamicBlocks(frame, card) {
     return;
   }
 
-  await renderListCards(container, items, frame);
+  await renderListCards(container, items, frame, card.card_no || 0);
 }
 
 async function renderCompareBlocks(container, items, frame) {
@@ -371,8 +492,8 @@ async function renderCompareBlocks(container, items, frame) {
   }
 }
 
-async function renderListCards(container, items, frame) {
-  var maxItems = Math.min(items.length, 3);
+async function renderListCards(container, items, frame, cardAccentIndex) {
+  var maxItems = Math.min(items.length, 4);
   var gap = STYLE.boxGap;
   var boxHeight = Math.floor((container.height - gap * (maxItems - 1)) / maxItems);
 
@@ -381,7 +502,8 @@ async function renderListCards(container, items, frame) {
       container, items[i],
       0, i * (boxHeight + gap),
       container.width, boxHeight,
-      "list_cards", frame
+      "list_cards", frame,
+      cardAccentIndex || 0
     );
   }
 }
@@ -447,8 +569,11 @@ async function renderKeyMessage(container, items, frame) {
 
 async function renderFlowBlocks(container, items, frame) {
   var maxItems = Math.min(items.length, 4);
-  var gap = STYLE.boxGap;
-  var boxHeight = Math.floor((container.height - gap * (maxItems - 1)) / maxItems);
+  var gap = 60;
+  var boxHeight = Math.min(
+    Math.floor((container.height - gap * (maxItems - 1)) / maxItems),
+    210
+  );
 
   for (var i = 0; i < maxItems; i++) {
     var blockY = i * (boxHeight + gap);
@@ -482,10 +607,13 @@ async function renderFlowBlocks(container, items, frame) {
   }
 }
 
-async function createTextBlock(container, item, x, y, width, height, layoutType, frame) {
+async function createTextBlock(container, item, x, y, width, height, layoutType, frame, itemIndex) {
   item = item || {};
+  itemIndex = itemIndex || 0;
 
   var isFlow = layoutType === "flow_process";
+  var isListCard = layoutType === "list_cards";
+  var accent = isListCard ? BOX_ACCENTS[itemIndex % BOX_ACCENTS.length] : null;
 
   var box = figma.createFrame();
 
@@ -493,19 +621,31 @@ async function createTextBlock(container, item, x, y, width, height, layoutType,
   box.x = x;
   box.y = y;
   box.resize(width, height);
-  box.fills = [{ type: "SOLID", color: hexToRgb("#FFFFFF") }];
-  box.strokes = [{ type: "SOLID", color: hexToRgb("#E5E7EB") }];
+  box.fills = [{ type: "SOLID", color: hexToRgb(accent ? accent.bg : "#FFFFFF") }];
+  box.strokes = accent ? [] : [{ type: "SOLID", color: hexToRgb("#E5E7EB") }];
   box.strokeWeight = 1;
   box.cornerRadius = 18;
-  box.clipsContent = false;
+  box.clipsContent = isListCard;
 
   container.appendChild(box);
 
+  if (isListCard) {
+    var bar = figma.createFrame();
+    bar.name = "generated_accent_bar";
+    bar.x = 0;
+    bar.y = 0;
+    bar.resize(10, height);
+    bar.fills = [{ type: "SOLID", color: hexToRgb(accent.bar) }];
+    bar.cornerRadius = 0;
+    box.appendChild(bar);
+  }
+
   var showNumber = !!item.number;
 
-  var textLeft = 24;
-  var topPadding = isFlow ? 14 : 22;
-  var bodyTop = isFlow ? 56 : 84;
+  var barOffset = isListCard ? 10 : 0;
+  var textLeft = 24 + barOffset;
+  var topPadding = isFlow ? 20 : 22;
+  var bodyTop = isFlow ? 86 : 84;
 
   if (showNumber) {
     var badgeSize = isFlow ? 40 : 58;
