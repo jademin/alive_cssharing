@@ -132,7 +132,14 @@ async function processBatch() {
     return;
   }
 
-  // 3. 선점한 작업들을 진짜 병렬로 처리
+  // 3. 메모리에 올라온 이후 DB의 민감 정보를 즉시 삭제
+  await Promise.all(grabbed.map(task =>
+    supabase.from("tasks")
+      .update({ api_key: null, github_token: null })
+      .eq("id", task.id)
+  ));
+
+  // 4. 선점한 작업들을 진짜 병렬로 처리 (api_key/github_token은 메모리 내 task 객체에 유지)
   await Promise.all(grabbed.map((task) => processTask(task)));
 }
 
