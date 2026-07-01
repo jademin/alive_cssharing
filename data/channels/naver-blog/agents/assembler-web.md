@@ -92,7 +92,8 @@ PUBLISH 블록만 렌더링한 **완성형 독립 HTML**을 생성한다.
   h2 { font-size: 20px; font-weight: 700; color: #111;
        border-left: 5px solid #2c4a7c; padding-left: 14px; margin: 32px 0 12px; }
   h3.toc-label { font-size: 16px; font-weight: 700; color: #555; margin-bottom: 8px; }
-  p { font-size: 16px; line-height: 1.8; color: #333; text-align: center; }
+  p { font-size: 16px; line-height: 1.8; color: #333; }
+  p.center-text { text-align: center; }
   ul, ol { padding-left: 24px; line-height: 1.8; }
   li { font-size: 16px; color: #333; margin-bottom: 4px; }
   blockquote { border-left: 4px solid #2c4a7c; background: #f0f4ff;
