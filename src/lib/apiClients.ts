@@ -19,7 +19,13 @@ export async function callClaude(
     const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
     throw new Error(err.error?.message ?? `Claude API 오류 (HTTP ${res.status})`);
   }
-  const data = await res.json() as { content?: Array<{ type: string; text: string }> };
+  const data = await res.json() as {
+    content?: Array<{ type: string; text: string }>;
+    stop_reason?: string;
+  };
+  if (data.stop_reason === "max_tokens") {
+    console.warn(`[apiClients] callClaude: max_tokens(${maxTokens})에 도달해 응답이 잘렸습니다.`);
+  }
   const block = data.content?.[0];
   if (block?.type === "text") return block.text;
   throw new Error("Claude API 응답 형식 오류");

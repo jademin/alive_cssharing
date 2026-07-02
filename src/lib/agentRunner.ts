@@ -345,7 +345,7 @@ export async function runAgentPipeline(
     `<!-- NOTES:END -->`;
 
   console.log(`[pipeline] ${channel} Step 2: 글쓰기 시작`);
-  const draftRaw = stripCodeFence(await step(writeSystem, writeUser, 16000));
+  const draftRaw = stripCodeFence(await step(writeSystem, writeUser, 24000));
   console.log(`[pipeline] ${channel} Step 2: 글쓰기 완료 (${draftRaw.length}자)`);
   saveDebug("step2_writer_raw", draftRaw);
 
@@ -376,7 +376,7 @@ export async function runAgentPipeline(
         const revisionUser =
           writeUser +
           `\n\n[이전 원고]\n${draftOutput}\n\n[품질 검증 결과 — 아래 문제점을 반드시 해결하여 전체를 다시 작성하세요]\n${issues}`;
-        const revisedRaw = stripCodeFence(await callClaude(pc.apiKey, pc.model, writeSystem, revisionUser, 16000));
+        const revisedRaw = stripCodeFence(await callClaude(pc.apiKey, pc.model, writeSystem, revisionUser, 24000));
         saveDebug("step2c_revision", revisedRaw);
         if (revisedRaw.trim()) {
           draftOutput = revisedRaw.includes("<!-- PUBLISH:START -->")
@@ -473,7 +473,7 @@ export async function runAgentPipeline(
     `위 draft.md를 정밀 파싱하고 가이드를 적용하여, 본문과 이미지 카드가 온전히 합쳐진 독립형 HTML만 출력하세요.`;
 
   console.log(`[pipeline] ${channel} Step 3: 조립 시작`);
-  const finalHtmlRaw = await step(assemblerSystem, assemblerUser, 16000, false, true);
+  const finalHtmlRaw = await step(assemblerSystem, assemblerUser, 32000, false, true);
   let finalHtml = stripCodeFence(finalHtmlRaw);
   console.log(`[pipeline] ${channel} Step 3: 조립 완료 (${finalHtml.length}자)`);
   saveDebug("step3_assembler_raw", finalHtmlRaw);
