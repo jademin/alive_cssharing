@@ -4,7 +4,7 @@ import { loadAIConfig, type Provider, type ProviderKey } from "./aiConfig";
 import { DEFAULT_MODELS } from "./resolveProvider";
 import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { callClaude, callOpenAI, callGemini, callGeminiWithSearch } from "./apiClients";
+import { callClaude, callOpenAI, callGemini, callGeminiWithSearch, callClaudeWithNativeSearch } from "./apiClients";
 
 function saveDebug(stepName: string, content: string) {
   try {
@@ -276,7 +276,16 @@ export async function runAgentPipeline(
     `\n\nresearch.md 형식으로 조사·분석 결과를 직접 출력하세요.`;
 
   console.log(`[pipeline] ${channel} Step 1: 리서치 시작`);
-  const researchOutput = stripCodeFence(await step(researchSystem, researchUser, 8192, provider === "gemini"));
+  let researchOutput: string;
+  if (provider === "claude") {
+    researchOutput = stripCodeFence(
+      await callClaudeWithNativeSearch(pc.apiKey, pc.model, researchSystem, researchUser, 8192, (n) => {
+        if (statusCallback) void statusCallback(`소스 ${n}개 검색 중`);
+      })
+    );
+  } else {
+    researchOutput = stripCodeFence(await step(researchSystem, researchUser, 8192, provider === "gemini"));
+  }
   console.log(`[pipeline] ${channel} Step 1: 리서치 완료 (${researchOutput.length}자)`);
   saveDebug("step1_research", researchOutput);
 
@@ -342,9 +351,44 @@ export async function runAgentPipeline(
 
   if (!draftRaw.trim()) throw new Error("[pipeline] 글쓰기 단계 결과가 비어 있습니다.");
 
-  const draftOutput = draftRaw.includes("<!-- PUBLISH:START -->")
+  let draftOutput = draftRaw.includes("<!-- PUBLISH:START -->")
     ? draftRaw
     : `<!-- PUBLISH:START -->\n${draftRaw}\n<!-- PUBLISH:END -->`;
+
+  // ── Step 2b: 자기검증 + 필요 시 1회 재작성 (Claude 전용) ──────
+  if (provider === "claude") {
+    if (statusCallback) await statusCallback("품질 검증 중");
+    const rubric = fileContents["guide/03-quality-check.md"] ?? "";
+    const verifySystem =
+      "당신은 콘텐츠 품질 검증 담당자입니다. 아래 원고를 하네스 기준으로 검증하고, " +
+      "첫 줄에 정확히 'PASS' 또는 'FAIL'만 쓰고, FAIL인 경우 다음 줄부터 구체적 문제점을 불릿으로 나열하세요.\n\n" +
+      rubric;
+    const verifyUser = `[검증 대상 원고]\n${draftOutput}`;
+
+    try {
+      const verifyResult = stripCodeFence(await callClaude(pc.apiKey, pc.model, verifySystem, verifyUser, 1024));
+      saveDebug("step2b_verify", verifyResult);
+
+      const firstLine = verifyResult.trim().split("\n")[0]?.trim().toUpperCase() ?? "";
+      if (firstLine.startsWith("FAIL")) {
+        if (statusCallback) await statusCallback("본문 보완 중 (재작성)");
+        const issues = verifyResult.trim().split("\n").slice(1).join("\n");
+        const revisionUser =
+          writeUser +
+          `\n\n[이전 원고]\n${draftOutput}\n\n[품질 검증 결과 — 아래 문제점을 반드시 해결하여 전체를 다시 작성하세요]\n${issues}`;
+        const revisedRaw = stripCodeFence(await callClaude(pc.apiKey, pc.model, writeSystem, revisionUser, 16000));
+        saveDebug("step2c_revision", revisedRaw);
+        if (revisedRaw.trim()) {
+          draftOutput = revisedRaw.includes("<!-- PUBLISH:START -->")
+            ? revisedRaw
+            : `<!-- PUBLISH:START -->\n${revisedRaw}\n<!-- PUBLISH:END -->`;
+        }
+      }
+    } catch (e) {
+      // 검증/재작성 실패는 파이프라인을 막지 않는다 — 원래 초안을 그대로 사용
+      console.warn(`[pipeline] ${channel} Step 2b 검증/재작성 실패, 원래 초안 유지: ${e instanceof Error ? e.message : e}`);
+    }
+  }
 
   // ── Step 2.5: Image Making ────────────────────────────────
   const imageMarkers = [...draftOutput.matchAll(/\[IMAGE:\s*([^\]]+)\]/g)];
